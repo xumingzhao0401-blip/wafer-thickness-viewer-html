@@ -1,0 +1,1683 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Wafer Thickness Viewer — 单页版（Pyodide 可选）</title>
+  <style>
+    :root{
+      --bg:#f6f7f9; --panel:#ffffff; --text:#0f172a; --muted:#64748b;
+      --border:rgba(15,23,42,.10); --r:14px; --shadow:0 10px 24px rgba(15,23,42,.10);
+      --mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+      --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans","PingFang SC","Microsoft YaHei",sans-serif;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:var(--sans);background:var(--bg);color:var(--text)}
+    header{padding:14px 16px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.9);backdrop-filter:blur(8px);position:sticky;top:0;z-index:10}
+    h1{font-size:16px;margin:0;font-weight:900}
+    .sub{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.35}
+    .wrap{display:grid;grid-template-columns:410px 1fr;gap:12px;padding:12px;max-width:1800px;margin:0 auto}
+    .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow)}
+    .sidebar{padding:12px;position:sticky;top:68px;height:calc(100vh - 92px);overflow:auto}
+    .main{padding:12px}
+    .section{padding:10px;border-radius:12px;background:rgba(15,23,42,.03);border:1px solid rgba(15,23,42,.08);margin-bottom:10px}
+    .section h2{font-size:13px;margin:0 0 8px;font-weight:900}
+    label{font-size:12px;color:var(--muted);display:block;margin-bottom:4px}
+    input[type="text"],input[type="number"],select,textarea{
+      width:100%;padding:8px 10px;border-radius:10px;border:1px solid rgba(15,23,42,.14);
+      background:#fff;color:var(--text);outline:none
+    }
+    textarea{min-height:48px;resize:vertical}
+    input[type="file"]{width:100%;padding:8px 10px;border-radius:10px;border:1px dashed rgba(15,23,42,.25);background:#fff;color:var(--muted)}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:center}
+    .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;align-items:center}
+    .btnbar{display:flex;flex-wrap:wrap;gap:8px}
+    button{
+      appearance:none;border:1px solid rgba(15,23,42,.14);background:rgba(15,23,42,.03);color:var(--text);
+      padding:9px 12px;border-radius:12px;cursor:pointer;font-weight:850;font-size:12px
+    }
+    button.primary{background:rgba(59,130,246,.10);border-color:rgba(59,130,246,.25)}
+    button.danger{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.25)}
+    button:disabled{opacity:.45;cursor:not-allowed}
+    .status{font-family:var(--mono);font-size:12px;padding:8px 10px;border-radius:12px;background:rgba(15,23,42,.03);border:1px solid rgba(15,23,42,.08);white-space:pre-wrap;word-break:break-word}
+    .hint{font-size:12px;color:var(--muted);line-height:1.35}
+    .tabs{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+    .tab{padding:8px 10px;border-radius:999px;border:1px solid rgba(15,23,42,.12);background:rgba(15,23,42,.03);color:var(--muted);cursor:pointer;user-select:none;font-size:12px;font-weight:900}
+    .tab.active{color:var(--text);background:rgba(59,130,246,.10);border-color:rgba(59,130,246,.25)}
+    .panel{display:none}
+    .panel.active{display:block}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .plot{min-height:360px;border-radius:14px;border:1px solid rgba(15,23,42,.10);background:#fff;overflow:hidden}
+    .plotTall{min-height:800px}
+    .plot3d{min-height:900px}
+    .tablewrap{overflow:auto;border:1px solid rgba(15,23,42,.10);border-radius:12px;background:#fff}
+    table{width:100%;border-collapse:collapse;min-width:760px;font-size:12px}
+    th,td{padding:8px 10px;border-bottom:1px solid rgba(15,23,42,.08);vertical-align:middle}
+    th{text-align:left;position:sticky;top:0;background:#fff;z-index:5}
+    tr:hover td{background:rgba(15,23,42,.02)}
+    td input.cell{width:100%;padding:6px 8px;border-radius:10px;border:1px solid rgba(15,23,42,.14);background:#fff;color:var(--text)}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;border:1px solid rgba(15,23,42,.12);color:var(--muted)}
+    .progress{height:10px;border-radius:999px;background:rgba(15,23,42,.06);border:1px solid rgba(15,23,42,.12);overflow:hidden}
+    .progress>div{height:100%;width:0%;background:rgba(59,130,246,.45)}
+    .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+    .kpi .box{border:1px solid rgba(15,23,42,.10);border-radius:12px;padding:8px 10px;background:#fff}
+    .kpi .box b{display:block;font-size:12px}
+    .kpi .box span{display:block;margin-top:3px;font-family:var(--mono);font-size:12px;color:var(--muted)}
+    .chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;border:1px solid rgba(15,23,42,.12);background:#fff;color:var(--muted);font-size:12px}
+    .chip input{margin:0}
+    footer{padding:10px 14px 18px;color:var(--muted);font-size:12px;text-align:center;opacity:.9}
+    .sep{height:1px;background:rgba(15,23,42,.10);margin:10px 0}
+  </style>
+
+  <!-- Plotly.js 用于图形交互与导出图片（替代 plotly.py + kaleido） -->
+  <script src="https://cdn.plot.ly/plotly-2.33.0.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>Wafer Thickness Viewer — 单页版（Pyodide 可选）</h1>
+  <div class="sub">目标：功能对齐 app_v6.py（数据集、插值热力图、3D surface、SPEC 平面、统计、模板生成器、PPT 导出）。Pyodide 加载成功就用 Python 逻辑；否则自动用 JS 逻辑兜底（功能不丢）。</div>
+</header>
+
+<div class="wrap">
+  <aside class="card sidebar">
+    <div class="section">
+      <h2>0) 依赖库（可选：Pyodide，一次加载后浏览器会缓存）</h2>
+      <div class="btnbar">
+        <button id="btnDeps" class="primary">下载并载入 Pyodide（numpy/pandas/scipy）</button>
+        <button id="btnSelfTest">运行自检</button>
+        <button id="btnReset" class="danger">重置状态</button>
+      </div>
+      <div style="height:8px"></div>
+      <div id="statusBox" class="status">状态：未加载 Pyodide（将使用 JS 兜底逻辑）。</div>
+      <div style="height:8px"></div>
+      <div class="progress"><div id="progBar"></div></div>
+      <div style="height:8px"></div>
+      <div class="hint">
+        说明：首次 Pyodide 可能下载几十 MB（取决于浏览器缓存命中）。如果你需要“彻底离线”，通常要配合 Service Worker（这会额外需要一个 sw.js 文件，不再是严格单 HTML）。
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>1) 模式</h2>
+      <div class="tabs" style="margin:0">
+        <div class="tab active" data-mode="normal">📊 普通模式</div>
+        <div class="tab" data-mode="gen">🛠️ 坐标生成器</div>
+      </div>
+    </div>
+
+    <!-- Normal mode sidebar -->
+    <div id="sideNormal" class="section">
+      <h2>普通模式</h2>
+
+      <div class="sep"></div>
+      <h2 style="margin-top:0">数据集管理</h2>
+      <label>选择要显示的数据集</label>
+      <select id="dsSelect"></select>
+
+      <div class="row" style="margin-top:8px">
+        <div>
+          <label>重命名当前数据集</label>
+          <input id="dsRename" type="text" placeholder="输入新名称" />
+        </div>
+        <div style="padding-top:18px">
+          <button id="btnRename" class="primary" style="width:100%">✏️ 应用重命名</button>
+        </div>
+      </div>
+
+      <div class="btnbar" style="margin-top:8px">
+        <button id="btnDelete" class="danger">🗑️ 删除当前数据集</button>
+      </div>
+
+      <div class="sep"></div>
+      <h2 style="margin-top:0">导入 CSV 作为新数据集</h2>
+      <label>选择 CSV（需列 x,y,thickness）</label>
+      <input id="csvFile" type="file" accept=".csv" />
+      <div class="row" style="margin-top:8px">
+        <div>
+          <label>Thickness 单位</label>
+          <select id="importUnit">
+            <option value="um" selected>μm</option>
+            <option value="a">Å</option>
+          </select>
+        </div>
+        <div>
+          <label>导入时晶圆尺寸（英寸）</label>
+          <select id="importWaferInch">
+            <option>4</option><option>6</option><option selected>8</option><option>12</option>
+          </select>
+        </div>
+      </div>
+      <div style="height:8px"></div>
+      <label>新数据集名称</label>
+      <input id="importName" type="text" placeholder="默认：文件名 + 时间戳" />
+      <div style="height:8px"></div>
+      <button id="btnImport" class="primary" disabled>➕ 导入为新数据集</button>
+
+      <div class="sep"></div>
+      <h2 style="margin-top:0">绘图参数（作用于当前数据集）</h2>
+
+      <div class="row">
+        <div>
+          <label>晶圆尺寸（英寸）</label>
+          <select id="waferInch">
+            <option>4</option><option>6</option><option selected>8</option><option>12</option>
+          </select>
+        </div>
+        <div>
+          <label>色图 (colormap)</label>
+          <select id="cmap">
+            <option>viridis</option><option>plasma</option><option>inferno</option><option>magma</option><option>coolwarm</option><option>cividis</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:8px">
+        <div><label>上限 SPEC（可选，μm）</label><input id="specUp" type="text" placeholder="例如 1.2500" /></div>
+        <div><label>下限 SPEC（可选，μm）</label><input id="specLo" type="text" placeholder="例如 0.7500" /></div>
+      </div>
+
+      <div style="height:8px"></div>
+      <label>插值网格分辨率（120~360，越高越细越慢）</label>
+      <input id="gridRes" type="number" min="120" max="360" step="10" value="220"/>
+
+      <div style="height:8px"></div>
+      <label class="chip"><input id="showLabels" type="checkbox" checked /> 顶视图显示厚度标签</label>
+
+      <div class="sep"></div>
+      <h2 style="margin-top:0">顶视图视窗（用于导出 PPT 的“当前视图”）</h2>
+      <div class="row">
+        <div><label>中心 X (mm)</label><input id="tvCx" type="number" value="0" step="1"/></div>
+        <div><label>中心 Y (mm)</label><input id="tvCy" type="number" value="0" step="1"/></div>
+      </div>
+      <div style="height:8px"></div>
+      <label>缩放（0.5~3.0，越大越放大）</label>
+      <input id="tvZoom" type="number" value="1.0" min="0.5" max="3.0" step="0.05"/>
+
+      <div class="sep"></div>
+      <h2 style="margin-top:0">3D 视角与显示设置（可选）</h2>
+      <div class="row3">
+        <div><label>eye.x (-3~3)</label><input id="eyeX" type="number" value="1.7" step="0.1"/></div>
+        <div><label>eye.y (-3~3)</label><input id="eyeY" type="number" value="1.7" step="0.1"/></div>
+        <div><label>eye.z (0.1~5)</label><input id="eyeZ" type="number" value="1.2" step="0.1" min="0.1"/></div>
+      </div>
+      <div style="height:8px"></div>
+      <div class="row">
+        <div><label>Z 方向夸张倍数（仅影响显示，1~500）</label><input id="zScale" type="number" value="10" min="1" max="500" step="1"/></div>
+        <div><label>纵向视觉比例（仅影响显示，0.2~10）</label><input id="zAspect" type="number" value="2.5" min="0.2" max="10" step="0.1"/></div>
+      </div>
+
+      <div class="sep"></div>
+      <h2 style="margin-top:0">导出到一页 PPT</h2>
+      <label>PPT 标题</label>
+      <input id="pptTitle" type="text" placeholder="默认：Wafer Thickness Report - 数据集名" />
+      <div style="height:8px"></div>
+      <div class="btnbar">
+        <button id="btnRender" class="primary">渲染图形</button>
+        <button id="btnExportPPT" class="primary">📤 生成 PPT 并下载</button>
+        <button id="btnExportCSV">📄 导出当前数据集 CSV</button>
+      </div>
+      <div style="height:8px"></div>
+      <div class="hint">坐标单位 mm；厚度内部统一 μm。若 Pyodide 未加载成功，将自动用 JS 计算与插值（功能不丢，但首次渲染速度取决于浏览器）。</div>
+    </div>
+
+    <!-- Generator mode sidebar -->
+    <div id="sideGen" class="section" style="display:none">
+      <h2>坐标生成器（Generator Mode）</h2>
+      <div class="hint">选择测量图案自动生成坐标。厚度留空表示无数据。保存后回到普通模式渲染。</div>
+
+      <div class="sep"></div>
+      <h2 style="margin-top:0">1. 晶圆设置</h2>
+      <div class="row">
+        <div>
+          <label>尺寸 (Inch)</label>
+          <select id="genInch">
+            <option>4</option><option>6</option><option selected>8</option><option>12</option>
+          </select>
+        </div>
+        <div>
+          <label>Edge Exclusion (mm)</label>
+          <input id="genEE" type="number" value="3.0" min="0" step="0.1"/>
+        </div>
+      </div>
+
+      <div class="sep"></div>
+      <h2 style="margin-top:0">2. 图案选择</h2>
+      <label>生成方式</label>
+      <select id="genPat">
+        <option selected>同心圆25点 (1+4+8+12)</option>
+        <option>SZU 25point</option>
+        <option>FAB 25点模板 (Fab25)</option>
+        <option>十字交叉 (Cross)</option>
+        <option>同心圆 (Concentric)</option>
+        <option>均匀网格 (Grid)</option>
+      </select>
+
+      <div id="genParamBox" style="margin-top:8px"></div>
+
+      <div class="sep"></div>
+      <h2 style="margin-top:0">3. 数据集命名</h2>
+      <label>保存名称</label>
+      <input id="genName" type="text" placeholder="默认：GEN + 图案 + 时间戳"/>
+
+      <div style="height:8px"></div>
+      <div class="btnbar">
+        <button id="btnGenBuild" class="primary">🔄 生成坐标表</button>
+        <button id="btnGenSave" class="primary" disabled>✅ 保存为数据集</button>
+        <button id="btnGenDlTpl" disabled>📥 下载 CSV 模板</button>
+      </div>
+
+      <div style="height:8px"></div>
+      <div class="hint">提示：预览会显示 point_id。保存为数据集后将只保留 x,y,thickness（与 app_v6.py 一致）。</div>
+    </div>
+  </aside>
+
+  <main class="card main">
+    <div class="tabs">
+      <div class="tab active" data-tab="view">🧾 数据与图形</div>
+      <div class="tab" data-tab="stats">📈 统计</div>
+    </div>
+
+    <section id="tabView" class="panel active">
+      <div class="section">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
+          <div><span class="pill" id="pillActive">Active: -</span></div>
+          <div class="hint" id="hintMeta">-</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2 id="tableTitle">数据表（X, Y, Radius, Thickness）</h2>
+        <div class="tablewrap"><table id="dataTable"></table></div>
+      </div>
+
+      <div class="section">
+        <h2>Top View Heatmap (μm)</h2>
+        <div class="plot plotTall" id="plotTop"></div>
+      </div>
+
+      <div class="section">
+        <h2>3D Distribution (μm, Z scaled)</h2>
+        <div class="plot plot3d" id="plot3d"></div>
+      </div>
+    </section>
+
+    <section id="tabStats" class="panel">
+      <div class="section">
+        <h2>统计结果（μm）</h2>
+        <div class="kpi" id="kpiBox"></div>
+        <div style="height:10px"></div>
+        <div class="tablewrap"><table id="statsTable"></table></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer>© 单页版示例（Plotly.js + PptxGenJS + 可选 Pyodide）。如果你需要严格离线（不依赖 CDN），需要把依赖打包进同目录并改成本地引用（会不再是“单一 HTML”）。</footer>
+
+<script>
+/* ============================
+   Wafer Thickness Viewer (SPA)
+   - Full parity mapping to app_v6.py:
+     - dataset store: register/rename/delete
+     - normal mode: import CSV, heatmap(IDW), 3D surface, spec planes, stats, PPT export
+     - generator: patterns, editable thickness, save dataset, download template
+   - Pyodide optional. If unavailable, JS fallback is used.
+   ============================ */
+(function() {
+  const $ = (s)=>document.querySelector(s);
+  const $$ = (s)=>Array.from(document.querySelectorAll(s));
+
+  // ---------------------------------
+  // State (equivalent to session_state)
+  // ---------------------------------
+  const state = {
+    depsReady: false,
+    pyodide: null,
+    usePython: false,
+    datasets: new Map(), // name -> { df:[{x,y,thickness}], wafer_inch, cmap, spec_upper, spec_lower, created_at }
+    active_ds: null,
+    gen_df: null,       // generator table with point_id,x,y,radius,thickness(str)
+    lastRender: {
+      topFigReady: false,
+      surfFigReady: false,
+    },
+  };
+
+  // Expose minimal API for internal/self tests
+  window.__WaferApp = {
+    state,
+    core: {},
+  };
+
+  // ---------------------------------
+  // Helpers: status/progress
+  // ---------------------------------
+  function setStatus(msg, type="info") {
+    const box=$("#statusBox");
+    box.textContent = (type==="ok"?"✅ ":type==="err"?"❌ ":"ℹ️ ") + msg;
+  }
+  function setProgress(pct){ $("#progBar").style.width = Math.min(100, pct) + "%"; }
+  function nowStr(){
+    const d=new Date(); const pad=(n)=>String(n).padStart(2,"0");
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+  function esc(s){ return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+  function clamp(v, a, b){ v=Number(v); if(!Number.isFinite(v)) return a; return Math.max(a, Math.min(b, v)); }
+
+  // ---------------------------------
+  // Dataset store (matches app_v6.py)
+  // ---------------------------------
+  function uniqueName(base) {
+    base = (base || "Wafer").trim();
+    let name = base;
+    let i = 2;
+    while(state.datasets.has(name)) {
+      name = `${base} (${i})`;
+      i += 1;
+    }
+    return name;
+  }
+
+  function registerDataset(name, dfRows, wafer_inch, cmap="viridis", spec_upper=null, spec_lower=null) {
+    const nm = uniqueName(name);
+    state.datasets.set(nm, {
+      df: dfRows.map(r => ({ x:Number(r.x), y:Number(r.y), thickness:Number(r.thickness) })),
+      wafer_inch: Number(wafer_inch),
+      cmap,
+      spec_upper: (spec_upper===null || spec_upper==="" ? null : Number(spec_upper)),
+      spec_lower: (spec_lower===null || spec_lower==="" ? null : Number(spec_lower)),
+      created_at: nowStr(),
+    });
+    state.active_ds = nm;
+    refreshDatasetUI();
+  }
+
+  function getActiveDataset() {
+    if(!state.active_ds) return [null, null];
+    return [state.active_ds, state.datasets.get(state.active_ds) || null];
+  }
+
+  function renameDataset(oldName, newName) {
+    if(!state.datasets.has(oldName)) return;
+    newName = (newName || "").trim();
+    if(!newName || newName === oldName) return;
+    const nm = uniqueName(newName);
+    const ds = state.datasets.get(oldName);
+    state.datasets.delete(oldName);
+    state.datasets.set(nm, ds);
+    state.active_ds = nm;
+    refreshDatasetUI();
+  }
+
+  function deleteDataset(name) {
+    state.datasets.delete(name);
+    state.active_ds = state.datasets.size ? Array.from(state.datasets.keys())[0] : null;
+    refreshDatasetUI();
+  }
+
+  window.__WaferApp.core.registerDataset = registerDataset;
+  window.__WaferApp.core.renameDataset = renameDataset;
+  window.__WaferApp.core.deleteDataset = deleteDataset;
+
+  // ---------------------------------
+  // Core math: match app_v6.py
+  // ---------------------------------
+  function convertToUm(values, unit) {
+    unit = String(unit||"").trim();
+    if(unit === "μm" || unit === "um") return values;
+    const isA = ["Å","A","Angstrom","angstrom","Ångström","a","å","Å"].includes(unit);
+    if(isA) return values.map(v=>v/10000.0);
+    return values;
+  }
+
+  function waferRadiusMM(inch) {
+    return Number(inch) * 25.4 / 2.0;
+  }
+
+  function withRadiusColumns(rows) {
+    return rows.map(r=>{
+      const x = Number(r.x), y=Number(r.y), t=Number(r.thickness);
+      const rad = Math.sqrt(x*x + y*y);
+      return {
+        x: +x.toFixed(2),
+        y: +y.toFixed(2),
+        radius: +rad.toFixed(2),
+        thickness: +t.toFixed(4),
+      };
+    });
+  }
+
+  function computeStatistics(ts) {
+    const arr = ts.map(Number).filter(v=>Number.isFinite(v));
+    const n = arr.length;
+    if(n === 0) return [];
+    const mean = arr.reduce((a,b)=>a+b,0) / n;
+    const minV = Math.min(...arr);
+    const maxV = Math.max(...arr);
+    const p2p = maxV - minV;
+    let std = 0;
+    if(n > 1) {
+      const s2 = arr.reduce((acc,v)=>acc + (v-mean)*(v-mean),0) / (n-1);
+      std = Math.sqrt(s2);
+    }
+    const safeMean = (mean !== 0) ? mean : 1e-9;
+    const safeSum  = ((maxV + minV) !== 0) ? (maxV + minV) : 1e-9;
+    const cov = std / safeMean * 100;
+    const wiw_nu = (maxV - minV) / safeSum * 100;
+    const range_mean = (maxV - minV) / safeMean * 100;
+    const max_dev = Math.max(...arr.map(v=>Math.abs(v-mean))) / safeMean * 100;
+    const u3 = 3*std / safeMean * 100;
+    const u6 = 6*std / safeMean * 100;
+
+    const rows = [
+      ["点数 N", "N", n, ""],
+      ["平均值 (Mean)", "μ = (1/N)·Σxi", mean, "μm"],
+      ["标准差 (Std, 1σ)", "σ = sqrt( Σ(xi-μ)^2 / (N-1) )", std, "μm"],
+      ["变异系数 (CoV)", "CoV = σ/μ × 100%", cov, "%"],
+      ["最小值 (Min)", "min(xi)", minV, "μm"],
+      ["最大值 (Max)", "max(xi)", maxV, "μm"],
+      ["峰-峰值 (Peak-to-Peak)", "P-P = max - min", p2p, "μm"],
+      ["WIWNU（常用均匀度）", "(max-min)/(max+min) × 100%", wiw_nu, "%"],
+      ["Range/Mean", "(max-min)/μ × 100%", range_mean, "%"],
+      ["最大偏差 (Max Dev.)", "max(|xi-μ|)/μ × 100%", max_dev, "%"],
+      ["3σ 均匀度", "3σ/μ × 100%", u3, "%"],
+      ["6σ 均匀度", "6σ/μ × 100%", u6, "%"],
+    ];
+    return rows;
+  }
+
+  window.__WaferApp.core.computeStatistics = computeStatistics;
+
+  function ringPoints(r, n, startDeg) {
+    const out = [];
+    const start = startDeg * Math.PI / 180.0;
+    for(let i=0;i<n;i++) {
+      const a = start + i * 2*Math.PI/n;
+      out.push([r*Math.cos(a), r*Math.sin(a)]);
+    }
+    return out;
+  }
+
+  function generatePatternCoords(pattern_type, radius_mm, edge_exclude_mm, params={}) {
+    const effective_r = Math.max(0.0, Number(radius_mm) - Number(edge_exclude_mm));
+    let points = [];
+    let point_id = null;
+
+    if(pattern_type === "十字交叉 (Cross)") {
+      const n_per_arm = Number(params.points_per_arm ?? 3);
+      points.push([0,0]);
+      if(effective_r > 0) {
+        const radii = [];
+        for(let i=1;i<=n_per_arm;i++) radii.push(effective_r * i/(n_per_arm+0)); // mimic linspace excluding 0
+        // NOTE: in python: np.linspace(0, effective_r, n_per_arm+1)[1:]
+        radii.splice(0,0); // no-op
+        const radii2 = Array.from({length:n_per_arm}, (_,k)=>effective_r*(k+1)/(n_per_arm+1));
+        for(const r of radii2) {
+          points.push([ r,0],[-r,0],[0,r],[0,-r]);
+        }
+      }
+    } else if(pattern_type === "同心圆 (Concentric)") {
+      const n_rings = Number(params.n_rings ?? 3);
+      const pts_per_ring = Number(params.pts_per_ring ?? 8);
+      points.push([0,0]);
+      if(effective_r > 0) {
+        for(let i=1;i<=n_rings;i++) {
+          const r = effective_r * i/n_rings;
+          const angles = Array.from({length:pts_per_ring}, (_,k)=>k*2*Math.PI/pts_per_ring);
+          for(const a of angles) points.push([r*Math.cos(a), r*Math.sin(a)]);
+        }
+      }
+    } else if(pattern_type === "均匀网格 (Grid)") {
+      const step = Number(params.grid_step ?? 30.0);
+      const xs = [];
+      for(let x=0; x<=effective_r+0.1; x+=step) xs.push(x);
+      const xs2 = xs.slice(1).reverse().map(v=>-v).concat(xs);
+      const ys2 = xs2.slice();
+      for(const x of xs2) {
+        for(const y of ys2) {
+          if(x*x + y*y <= effective_r*effective_r + 1e-9) points.push([x,y]);
+        }
+      }
+    } else if(pattern_type === "FAB 25点模板 (Fab25)") {
+      const s = (effective_r > 0) ? effective_r/3.0 : 0.0;
+      const layout = [
+        [4,   0*s,  3*s],
+        [5,  -1*s,  2*s], [3, 0*s, 2*s], [6,  1*s, 2*s],
+        [10, -2*s,  1*s], [9, -1*s, 1*s], [2, 0*s, 1*s], [8,  1*s, 1*s], [7,  2*s, 1*s],
+        [11, -3*s,  0*s], [12, -2*s, 0*s], [13, -1*s, 0*s], [1, 0*s, 0*s], [14, 1*s, 0*s], [15, 2*s, 0*s], [16, 3*s, 0*s],
+        [21, -2*s, -1*s], [20, -1*s, -1*s], [19, 0*s, -1*s], [18, 1*s, -1*s], [17, 2*s, -1*s],
+        [22, -1*s, -2*s], [23, 0*s, -2*s], [24, 1*s, -2*s],
+        [25,  0*s, -3*s],
+      ];
+      layout.sort((a,b)=>a[0]-b[0]);
+      point_id = layout.map(t=>t[0]);
+      points = layout.map(t=>[Number(t[1]),Number(t[2])]);
+    } else if(pattern_type === "同心圆25点 (1+4+8+12)") {
+      const rotate = Number(params.rotate_deg ?? 0.0);
+      points.push([0,0]);
+      if(effective_r > 0) {
+        const r1 = effective_r/3.0, r2 = 2*effective_r/3.0, r3 = effective_r;
+        points = points.concat(ringPoints(r1,4,45.0+rotate));
+        points = points.concat(ringPoints(r2,8,0.0+rotate));
+        points = points.concat(ringPoints(r3,12,15.0+rotate));
+      }
+    } else if(pattern_type === "SZU 25point") {
+      const rotate = Number(params.rotate_deg ?? 0.0);
+      let r_cross=0, r_mid=0, r_outer=0;
+      if(effective_r > 0) {
+        r_cross = effective_r * 0.316;
+        r_mid   = effective_r * 0.656;
+        r_outer = effective_r * 0.98;
+      }
+      let layout = [[1,0,0]];
+      const cross = [[2,90],[3,0],[4,270],[5,180]];
+      for(const [pid,ang] of cross) {
+        const a=(ang+rotate)*Math.PI/180;
+        layout.push([pid, r_cross*Math.cos(a), r_cross*Math.sin(a)]);
+      }
+      const mid = {
+        6: 75.0, 7: 15.0, 8: 345.0, 9: 285.0, 10: 240.0, 11: 195.0, 12: 165.0, 13: 120.0,
+      };
+      for(const pid of Object.keys(mid).map(Number).sort((a,b)=>a-b)) {
+        const ang = mid[pid];
+        const a=(ang+rotate)*Math.PI/180;
+        layout.push([pid, r_mid*Math.cos(a), r_mid*Math.sin(a)]);
+      }
+      const outer = [
+        [14,90],[15,60],[16,30],[17,0],[18,330],[19,300],[20,270],[21,240],[22,210],[23,180],[24,150],[25,120],
+      ];
+      for(const [pid,ang] of outer) {
+        const a=(ang+rotate)*Math.PI/180;
+        layout.push([pid, r_outer*Math.cos(a), r_outer*Math.sin(a)]);
+      }
+      layout.sort((a,b)=>a[0]-b[0]);
+      point_id = layout.map(t=>t[0]);
+      points = layout.map(t=>[Number(t[1]),Number(t[2])]);
+    }
+
+    // Build df-like rows
+    const rows = points.map(([x,y], idx)=> {
+      const pid = point_id ? point_id[idx] : (idx+1);
+      const rad = Math.sqrt(x*x + y*y);
+      return { point_id: pid, x, y, radius: rad, thickness: "" };
+    });
+    return rows;
+  }
+
+  window.__WaferApp.core.generatePatternCoords = generatePatternCoords;
+
+  // ---------------------------------
+  // CSV parsing (like load_csv)
+  // ---------------------------------
+  function parseCSV(text) {
+    const lines = text.trim().split(/\r?\n/);
+    if(!lines.length) throw new Error("空 CSV");
+    const header = lines[0].split(",").map(s=>s.trim().toLowerCase());
+    const idx = (k)=>header.indexOf(k);
+    const ix=idx("x"), iy=idx("y"), it=idx("thickness");
+    if(ix<0||iy<0||it<0) throw new Error("CSV 缺少列：x,y,thickness");
+    const rows = [];
+    for(let i=1;i<lines.length;i++) {
+      if(!lines[i].trim()) continue;
+      const cols = lines[i].split(",").map(s=>s.trim());
+      const x=Number(cols[ix]), y=Number(cols[iy]), t=Number(cols[it]);
+      if(Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(t)) rows.push({x,y,thickness:t});
+    }
+    if(!rows.length) throw new Error("CSV 解析后没有有效数据");
+    return rows;
+  }
+
+  // ---------------------------------
+  // IDW interpolation in a WebWorker (single HTML via Blob)
+  // ---------------------------------
+  const workerCode = `
+  self.onmessage = (ev) => {
+    const {xs, ys, ts, radius, gridRes, power, eps} = ev.data;
+    const n = gridRes|0;
+    if(!xs || xs.length < 3) {
+      self.postMessage({ok:false, err:"点数少于3，无法插值"});
+      return;
+    }
+    const xlin = new Float64Array(n);
+    const ylin = new Float64Array(n);
+    for(let i=0;i<n;i++) {
+      const t = -radius + (2*radius) * (i/(n-1));
+      xlin[i]=t; ylin[i]=t;
+    }
+    const Z = Array.from({length:n}, ()=>new Array(n).fill(null));
+    const r2 = radius*radius;
+    for(let iy=0; iy<n; iy++) {
+      const y = ylin[iy];
+      for(let ix=0; ix<n; ix++) {
+        const x = xlin[ix];
+        if(x*x + y*y > r2) {
+          Z[iy][ix] = null;
+          continue;
+        }
+        let wsum=0, tsum=0;
+        for(let k=0;k<xs.length;k++) {
+          const dx = x - xs[k];
+          const dy = y - ys[k];
+          const dist = Math.sqrt(dx*dx + dy*dy) + eps;
+          const w = 1.0 / Math.pow(dist, power);
+          wsum += w;
+          tsum += w * ts[k];
+        }
+        Z[iy][ix] = tsum / wsum;
+      }
+    }
+    self.postMessage({ok:true, x:Array.from(xlin), y:Array.from(ylin), z:Z});
+  };
+  `;
+  const workerURL = URL.createObjectURL(new Blob([workerCode], {type:"text/javascript"}));
+  const idwWorker = new Worker(workerURL);
+
+  function idwGrid(xs, ys, ts, radius, gridRes, power=2.0, eps=1e-6) {
+    return new Promise((resolve, reject)=>{
+      const handler = (ev) => {
+        idwWorker.removeEventListener("message", handler);
+        const data = ev.data;
+        if(!data.ok) reject(new Error(data.err || "IDW 失败"));
+        else resolve(data);
+      };
+      idwWorker.addEventListener("message", handler);
+      idwWorker.postMessage({xs, ys, ts, radius, gridRes, power, eps});
+    });
+  }
+
+  window.__WaferApp.core.idwGrid = idwGrid;
+
+  // ---------------------------------
+  // Plotly render (matches make_top_view_heatmap / make_3d_surface)
+  // ---------------------------------
+  function circleBoundaryTrace(radius_mm, n=361) {
+    const theta = Array.from({length:n}, (_,i)=>i*2*Math.PI/(n-1));
+    return {
+      type:"scatter",
+      mode:"lines",
+      x: theta.map(t=>radius_mm*Math.cos(t)),
+      y: theta.map(t=>radius_mm*Math.sin(t)),
+      showlegend:false,
+      line:{width:3, color:"black"},
+      hoverinfo:"skip",
+    };
+  }
+
+  async function makeTopViewHeatmap(ds, view_center, view_zoom) {
+    const rows = ds.df;
+    const xs = rows.map(r=>Number(r.x));
+    const ys = rows.map(r=>Number(r.y));
+    const ts = rows.map(r=>Number(r.thickness));
+    const radius_mm = waferRadiusMM($("#waferInch").value);
+    const gridRes = Number($("#gridRes").value);
+    const cmap = $("#cmap").value;
+    const showLabels = $("#showLabels").checked;
+
+    const grid = await idwGrid(xs, ys, ts, radius_mm, gridRes, 2.0, 1e-6);
+
+    const figData = [];
+    figData.push({
+      type:"heatmap",
+      z:grid.z,
+      x:grid.x,
+      y:grid.y,
+      colorscale:cmap,
+      colorbar:{title:"Thickness (μm)", thickness:18, len:0.85},
+      hovertemplate:"X=%{x:.2f}<br>Y=%{y:.2f}<br>T=%{z:.4f} μm<extra></extra>",
+    });
+
+    figData.push(circleBoundaryTrace(radius_mm));
+
+    figData.push({
+      type:"scatter",
+      mode:"markers",
+      x:xs, y:ys,
+      marker:{size:8, color:"black", line:{width:1, color:"white"}},
+      showlegend:false,
+      text: ts.map(v=>Number(v).toFixed(4)),
+      hovertemplate:"X=%{x:.2f}<br>Y=%{y:.2f}<br>T=%{text} μm<extra></extra>",
+    });
+
+    if(showLabels) {
+      figData.push({
+        type:"scatter",
+        mode:"text",
+        x:xs, y:ys,
+        text: ts.map(v=>Number(v).toFixed(4)),
+        textposition:"middle center",
+        showlegend:false,
+        hoverinfo:"skip",
+        textfont:{color:"black", size:10, family:"Arial"}
+      });
+    }
+
+    const cx=view_center[0], cy=view_center[1];
+    const zoom=Math.max(0.2, Number(view_zoom));
+    const half = radius_mm * 1.05 / zoom;
+    const xr=[cx-half, cx+half];
+    const yr=[cy-half, cy+half];
+
+    const layout={
+      title:"Top View Heatmap (μm)",
+      margin:{l:20,r:20,t:60,b:20},
+      xaxis:{title:"X (mm)", scaleanchor:"y", scaleratio:1, range:xr},
+      yaxis:{title:"Y (mm)", range:yr},
+      height:800,
+    };
+    await Plotly.newPlot("plotTop", figData, layout, {responsive:true});
+    state.lastRender.topFigReady = true;
+  }
+
+  async function make3DSurface(ds, cameraEye, z_scale, z_aspect) {
+    const rows = ds.df;
+    const xs = rows.map(r=>Number(r.x));
+    const ys = rows.map(r=>Number(r.y));
+    const ts = rows.map(r=>Number(r.thickness));
+    const radius_mm = waferRadiusMM($("#waferInch").value);
+    const gridRes = Number($("#gridRes").value);
+    const cmap = $("#cmap").value;
+    const specUpper = parseNullable($("#specUp").value);
+    const specLower = parseNullable($("#specLo").value);
+
+    const grid = await idwGrid(xs, ys, ts, radius_mm, gridRes, 2.0, 1e-6);
+
+    const Zscaled = grid.z.map(row => row.map(v => v==null ? null : v*Number(z_scale)));
+    const data = [{
+      type:"surface",
+      x:grid.x, y:grid.y, z:Zscaled,
+      colorscale:cmap,
+      hovertemplate:"X=%{x:.2f}<br>Y=%{y:.2f}<br>T=%{z:.4f} (scaled)<extra></extra>",
+      showscale:true,
+    }];
+
+    // spec planes
+    const r2 = radius_mm*radius_mm;
+    if(specUpper !== null && Number.isFinite(specUpper)) {
+      const Zu = grid.y.map((yv, iy)=> grid.x.map((xv, ix) => {
+        const x = xv, y = yv;
+        const inside = (x*x + y*y) <= r2;
+        return inside ? (specUpper*Number(z_scale)) : null;
+      }));
+      data.push({type:"surface", x:grid.x, y:grid.y, z:Zu, opacity:0.25, showscale:false, colorscale:[[0,"red"],[1,"red"]], hoverinfo:"skip", name:"USL"});
+    }
+    if(specLower !== null && Number.isFinite(specLower)) {
+      const Zl = grid.y.map((yv, iy)=> grid.x.map((xv, ix) => {
+        const x = xv, y = yv;
+        const inside = (x*x + y*y) <= r2;
+        return inside ? (specLower*Number(z_scale)) : null;
+      }));
+      data.push({type:"surface", x:grid.x, y:grid.y, z:Zl, opacity:0.25, showscale:false, colorscale:[[0,"red"],[1,"red"]], hoverinfo:"skip", name:"LSL"});
+    }
+
+    data.push({
+      type:"scatter3d",
+      x:xs, y:ys, z:ts.map(v=>v*Number(z_scale)),
+      mode:"markers",
+      marker:{size:4, color:"black"},
+      name:"Points",
+      customdata: ts,
+      hovertemplate:"X=%{x:.2f}<br>Y=%{y:.2f}<br>T=%{customdata:.4f} μm<extra></extra>",
+    });
+
+    const layout={
+      title:"3D Distribution (μm, Z scaled)",
+      scene:{
+        xaxis:{title:"X (mm)"},
+        yaxis:{title:"Y (mm)"},
+        zaxis:{title:`Thickness × ${Number(z_scale)} (display)`},
+        aspectmode:"manual",
+        aspectratio:{x:1,y:1,z:Number(z_aspect)},
+        domain:{x:[0,1], y:[0,1]},
+        camera:{eye:{x:cameraEye[0], y:cameraEye[1], z:cameraEye[2]}},
+      },
+      margin:{l:0,r:0,t:50,b:0},
+      height:900,
+    };
+    await Plotly.newPlot("plot3d", data, layout, {responsive:true});
+    state.lastRender.surfFigReady = true;
+  }
+
+  // ---------------------------------
+  // PPT export (matches build_ppt_one_slide layout)
+  // ---------------------------------
+  async function loadScript(url){
+    return new Promise((resolve,reject)=>{
+      const s=document.createElement("script");
+      s.src=url;
+      s.onload=resolve;
+      s.onerror=()=>reject(new Error("加载脚本失败: " + url));
+      document.head.appendChild(s);
+    });
+  }
+
+  async function ensurePptLibs(){
+    if(window.PptxGenJS) return;
+    await loadScript("https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js");
+  }
+
+  function parseNullable(s){
+    try {
+      s = String(s??"").trim();
+      if(!s) return null;
+      const v = Number(s);
+      return Number.isFinite(v) ? v : null;
+    } catch(e) { return null; }
+  }
+
+  function downloadText(filename, text, mime="text/plain") {
+    const blob = new Blob([text], {type: mime});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  }
+
+  async function exportPPTOneSlide() {
+    await ensurePptLibs();
+    const [dsName, ds] = getActiveDataset();
+    if(!ds) throw new Error("没有活动数据集");
+
+    // Ensure figures exist
+    if(!state.lastRender.topFigReady || !state.lastRender.surfFigReady) {
+      await renderAll();
+    }
+
+    setStatus("导出中：渲染 PNG ...");
+    const topPng = await Plotly.toImage("plotTop", {format:"png", width:860, height:800, scale:2});
+    const surfPng = await Plotly.toImage("plot3d",  {format:"png", width:860, height:900, scale:2});
+
+    // Prepare tables
+    const rawRows = withRadiusColumns(ds.df);
+    const rawExport = rawRows.map(r=>({
+      "X(mm)": Number(r.x).toFixed(2),
+      "Y(mm)": Number(r.y).toFixed(2),
+      "R(mm)": Number(r.radius).toFixed(2),
+      "T(μm)": Number(r.thickness).toFixed(4),
+    }));
+    const maxRows = 28;
+    const rawShow = rawExport.slice(0, maxRows);
+
+    const stats = computeStatistics(ds.df.map(r=>r.thickness));
+    const statsExport = stats.map(([name, formula, value, unit])=>({
+      "特征名": name,
+      "公式": formula,
+      "计算结果": (typeof value === "number" ? value : Number(value)),
+      "单位": unit,
+    }));
+
+    const waferInch = Number($("#waferInch").value);
+    const subtitle = `Dataset: ${dsName} | Wafer: ${waferInch.toFixed(0)} inch | ${nowStr()}`;
+    const title = ($("#pptTitle").value || "").trim() || `Wafer Thickness Report - ${dsName}`;
+
+    setStatus("导出中：生成 PPTX ...");
+    const pptx = new PptxGenJS();
+    pptx.layout = "LAYOUT_WIDE";
+
+    const slide = pptx.addSlide();
+
+    // Layout numbers (inches) copied from build_ppt_one_slide
+    const slideW = 13.333;
+    const m = 0.35;
+    const gap = 0.22;
+    const contentTop = 1.0;
+    const imgSize = 3.149606;
+    const imgGap = 0.10;
+    const rightZoneW = 3.55;
+    const usableW = slideW - 2*m;
+    const leftZoneW = imgSize;
+    const midZoneW = usableW - leftZoneW - rightZoneW - 2*gap;
+    const leftX = m;
+    const midX  = leftX + leftZoneW + gap;
+    const rightX = midX + midZoneW + gap;
+    const img1Y = contentTop;
+    const img2Y = img1Y + imgSize + imgGap;
+    const tableH = imgSize*2 + imgGap;
+
+    // Title
+    slide.addText(title, {x:m, y:0.15, w:slideW-2*m, h:0.5, fontFace:"Microsoft YaHei", fontSize:24, bold:true, color:"191919"});
+    slide.addText(subtitle, {x:m, y:0.62, w:slideW-2*m, h:0.32, fontFace:"Microsoft YaHei", fontSize:12, color:"4b5563"});
+
+    // Images
+    slide.addImage({data: topPng, x:leftX, y:img1Y, w:imgSize, h:imgSize});
+    slide.addImage({data: surfPng, x:leftX, y:img2Y, w:imgSize, h:imgSize});
+
+    // Labels
+    slide.addText("Raw Data", {x:midX, y:contentTop-0.22, w:midZoneW, h:0.22, fontFace:"Microsoft YaHei", fontSize:11, bold:true, color:"191919"});
+    slide.addText("Statistics", {x:rightX, y:contentTop-0.22, w:rightZoneW, h:0.22, fontFace:"Microsoft YaHei", fontSize:11, bold:true, color:"191919"});
+
+    // Tables
+    function toTableData(objs) {
+      if(!objs.length) return [[]];
+      const cols = Object.keys(objs[0]);
+      const rows = objs.map(o=>cols.map(c=>String(o[c] ?? "")));
+      return [cols, ...rows];
+    }
+
+    const rawTbl = toTableData(rawShow);
+    slide.addTable(rawTbl, {
+      x: midX, y: contentTop, w: midZoneW, h: tableH,
+      fontFace:"Microsoft YaHei", fontSize:9,
+      border: {pt:1, color:"DDDDDD"},
+      fill: "FFFFFF",
+      color: "111111",
+      valign: "top",
+      rowH: 0.22,
+      colW: [midZoneW*0.25, midZoneW*0.25, midZoneW*0.25, midZoneW*0.25],
+      autoFit: true,
+    });
+
+    const statsTbl = toTableData(statsExport);
+    slide.addTable(statsTbl, {
+      x: rightX, y: contentTop, w: rightZoneW, h: tableH,
+      fontFace:"Microsoft YaHei", fontSize:9,
+      border: {pt:1, color:"DDDDDD"},
+      fill: "FFFFFF",
+      color: "111111",
+      valign: "top",
+      rowH: 0.22,
+      autoFit: true,
+    });
+
+    const safeName = dsName.replace(/[\\/:*?"<>|]/g,"_");
+    await pptx.writeFile({ fileName: `${safeName}_report.pptx` });
+    setStatus("PPT 导出完成", "ok");
+  }
+
+  // ---------------------------------
+  // Pyodide optional (use python only when available)
+  // NOTE: for strict parity, JS fallback already matches formulas; python used mainly for your "want python in browser".
+  // ---------------------------------
+  async function ensurePyodide() {
+    if(state.depsReady) return true;
+    try {
+      setProgress(10); setStatus("加载 PptxGenJS ...");
+      await ensurePptLibs();
+
+      setProgress(20); setStatus("加载 Pyodide (首次可能较大) ...");
+      await loadScript("https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js");
+
+      setProgress(35); setStatus("初始化 Pyodide ...");
+      state.pyodide = await loadPyodide();
+
+      setProgress(55); setStatus("加载 numpy / pandas / scipy ...");
+      await state.pyodide.loadPackage(["numpy","pandas","scipy"]);
+
+      // Inject python code derived from app_v6.py (core math + patterns)
+      setProgress(75); setStatus("注入 Python 逻辑 ...");
+      const py = state.pyodide;
+      const pyCode = `
+import numpy as np
+import pandas as pd
+
+def convert_to_um(values, unit):
+    unit = str(unit).strip()
+    if unit in ["μm","um"]:
+        return values
+    if unit in ["Å", "A", "Angstrom", "angstrom", "Ångström","a","å"]:
+        return values / 10000.0
+    return values
+
+def build_grids(radius_mm, grid_res):
+    x_lin = np.linspace(-radius_mm, radius_mm, int(grid_res))
+    y_lin = np.linspace(-radius_mm, radius_mm, int(grid_res))
+    return np.meshgrid(x_lin, y_lin)
+
+def cached_idw_interpolation(xs, ys, ts, radius_mm, grid_res, power=2.0, eps=1e-6):
+    xs = np.asarray(xs, dtype=float)
+    ys = np.asarray(ys, dtype=float)
+    ts = np.asarray(ts, dtype=float)
+    if xs.size < 3:
+        return None, None, None
+    grid_x, grid_y = build_grids(float(radius_mm), int(grid_res))
+    gx = grid_x[..., np.newaxis]
+    gy = grid_y[..., np.newaxis]
+    px = xs[np.newaxis, np.newaxis, :]
+    py = ys[np.newaxis, np.newaxis, :]
+    dx = gx - px
+    dy = gy - py
+    dist = np.sqrt(dx**2 + dy**2) + float(eps)
+    weights = 1.0 / (dist**float(power))
+    w_sum = np.sum(weights, axis=2)
+    t_weighted_sum = np.sum(weights * ts[np.newaxis, np.newaxis, :], axis=2)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        grid_t = t_weighted_sum / w_sum
+    mask = (grid_x**2 + grid_y**2) <= (float(radius_mm)**2)
+    grid_t = np.where(mask, grid_t, np.nan)
+    return grid_x, grid_y, grid_t
+
+def _ring_points(r, n, start_deg):
+    ang = np.deg2rad(start_deg) + np.linspace(0, 2*np.pi, int(n), endpoint=False)
+    return [(float(r*np.cos(a)), float(r*np.sin(a))) for a in ang]
+
+def generate_pattern_coords(pattern_type, radius_mm, edge_exclude_mm, **kwargs):
+    effective_r = max(0.0, float(radius_mm) - float(edge_exclude_mm))
+    points = []
+    point_id = None
+
+    if pattern_type == "十字交叉 (Cross)":
+        n_per_arm = int(kwargs.get("points_per_arm", 3))
+        points.append((0.0, 0.0))
+        if effective_r > 0:
+            radii = np.linspace(0, effective_r, n_per_arm + 1)[1:]
+            for r in radii:
+                points.extend([(r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r)])
+
+    elif pattern_type == "同心圆 (Concentric)":
+        n_rings = int(kwargs.get("n_rings", 3))
+        pts_per_ring = int(kwargs.get("pts_per_ring", 8))
+        points.append((0.0, 0.0))
+        if effective_r > 0:
+            for i in range(1, n_rings + 1):
+                r = effective_r * i / n_rings
+                angles = np.linspace(0, 2*np.pi, pts_per_ring, endpoint=False)
+                for ang in angles:
+                    points.append((float(r*np.cos(ang)), float(r*np.sin(ang))))
+
+    elif pattern_type == "均匀网格 (Grid)":
+        step = float(kwargs.get("grid_step", 30.0))
+        xs = np.arange(0, effective_r + 0.1, step)
+        xs = np.concatenate((-xs[:0:-1], xs))
+        ys = xs.copy()
+        for x in xs:
+            for y in ys:
+                if (x**2 + y**2) <= effective_r**2:
+                    points.append((float(x), float(y)))
+
+    elif pattern_type == "FAB 25点模板 (Fab25)":
+        s = effective_r / 3.0 if effective_r > 0 else 0.0
+        layout = [
+            (4,   0*s,  3*s),
+            (5,  -1*s,  2*s), (3, 0*s, 2*s), (6,  1*s, 2*s),
+            (10, -2*s,  1*s), (9, -1*s, 1*s), (2, 0*s, 1*s), (8,  1*s, 1*s), (7,  2*s, 1*s),
+            (11, -3*s,  0*s), (12, -2*s, 0*s), (13, -1*s, 0*s), (1, 0*s, 0*s), (14, 1*s, 0*s), (15, 2*s, 0*s), (16, 3*s, 0*s),
+            (21, -2*s, -1*s), (20, -1*s, -1*s), (19, 0*s, -1*s), (18, 1*s, -1*s), (17, 2*s, -1*s),
+            (22, -1*s, -2*s), (23, 0*s, -2*s), (24, 1*s, -2*s),
+            (25,  0*s, -3*s),
+        ]
+        layout_sorted = sorted(layout, key=lambda t: t[0])
+        point_id = [pid for pid, _, _ in layout_sorted]
+        points = [(float(x), float(y)) for _, x, y in layout_sorted]
+
+    elif pattern_type == "同心圆25点 (1+4+8+12)":
+        rotate = float(kwargs.get("rotate_deg", 0.0))
+        points.append((0.0, 0.0))
+        if effective_r > 0:
+            r1, r2, r3 = effective_r/3.0, 2*effective_r/3.0, effective_r
+            points += _ring_points(r1, 4, start_deg=45.0 + rotate)
+            points += _ring_points(r2, 8, start_deg=0.0 + rotate)
+            points += _ring_points(r3, 12, start_deg=15.0 + rotate)
+
+    elif pattern_type == "SZU 25point":
+        rotate = float(kwargs.get("rotate_deg", 0.0))
+        if effective_r > 0:
+            r_cross = effective_r * 0.316
+            r_mid   = effective_r * 0.656
+            r_outer = effective_r * 0.98
+        else:
+            r_cross = r_mid = r_outer = 0.0
+
+        layout = [(1, 0.0, 0.0)]
+        cross = [(2, 90.0), (3, 0.0), (4, 270.0), (5, 180.0)]
+        for pid, ang in cross:
+            a = np.deg2rad(ang + rotate)
+            layout.append((pid, float(r_cross * np.cos(a)), float(r_cross * np.sin(a))))
+
+        mid = {
+            6: 75.0, 7: 15.0, 8: 345.0, 9: 285.0,
+            10: 240.0, 11: 195.0, 12: 165.0, 13: 120.0,
+        }
+        for pid, ang in mid.items():
+            a = np.deg2rad(ang + rotate)
+            layout.append((pid, float(r_mid * np.cos(a)), float(r_mid * np.sin(a))))
+
+        outer = [
+            (14, 90.0), (15, 60.0), (16, 30.0), (17, 0.0),
+            (18, 330.0), (19, 300.0), (20, 270.0), (21, 240.0),
+            (22, 210.0), (23, 180.0), (24, 150.0), (25, 120.0),
+        ]
+        for pid, ang in outer:
+            a = np.deg2rad(ang + rotate)
+            layout.append((pid, float(r_outer * np.cos(a)), float(r_outer * np.sin(a))))
+
+        layout_sorted = sorted(layout, key=lambda t: t[0])
+        point_id = [pid for pid, _, _ in layout_sorted]
+        points = [(float(x), float(y)) for _, x, y in layout_sorted]
+
+    df = pd.DataFrame(points, columns=["x","y"])
+    if point_id is not None:
+        df.insert(0, "point_id", point_id)
+    else:
+        df.insert(0, "point_id", list(range(1, len(df)+1)))
+    df["radius"] = np.sqrt(df["x"]**2 + df["y"]**2)
+    df["thickness"] = np.nan
+    return df
+`;
+      py.runPython(pyCode);
+
+      state.depsReady = true;
+      state.usePython = true;
+      setProgress(100); setStatus("Pyodide 准备就绪（将优先用 Python 逻辑）", "ok");
+      return true;
+    } catch(e) {
+      state.depsReady = false;
+      state.usePython = false;
+      setProgress(0); setStatus("Pyodide 加载失败，已回退到 JS 逻辑： " + e.message, "err");
+      return false;
+    }
+  }
+
+  // ---------------------------------
+  // UI rendering: dataset list & meta
+  // ---------------------------------
+  function refreshDatasetUI() {
+    const sel=$("#dsSelect");
+    const names = Array.from(state.datasets.keys());
+    sel.innerHTML = names.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join("");
+    if(!state.active_ds && names.length) state.active_ds = names[0];
+    if(state.active_ds && names.includes(state.active_ds)) sel.value = state.active_ds;
+
+    const [nm, ds] = getActiveDataset();
+    $("#pillActive").textContent = "Active: " + (nm || "-");
+    $("#hintMeta").textContent = ds ? `创建时间：${ds.created_at} | 点数：${ds.df.length}` : "还没有数据集：可导入 CSV 或在生成器中保存。";
+    $("#btnExportPPT").disabled = !ds;
+    $("#btnExportCSV").disabled = !ds;
+    $("#btnRender").disabled = !ds;
+    $("#btnDelete").disabled = !ds;
+    $("#btnRename").disabled = !ds;
+
+    // Sync defaults into inputs
+    if(ds) {
+      $("#dsRename").value = nm || "";
+      // If user hasn't edited, set defaults
+      $("#waferInch").value = String(Math.round(ds.wafer_inch || 8));
+      $("#cmap").value = ds.cmap || "viridis";
+      $("#specUp").value = (ds.spec_upper==null ? "" : String(ds.spec_upper));
+      $("#specLo").value = (ds.spec_lower==null ? "" : String(ds.spec_lower));
+      const defaultTitle = `Wafer Thickness Report - ${nm}`;
+      if(!($("#pptTitle").value || "").trim()) $("#pptTitle").value = defaultTitle;
+    } else {
+      $("#dsRename").value = "";
+      if(!($("#pptTitle").value || "").trim()) $("#pptTitle").value = "";
+    }
+
+    // Render table quickly
+    renderDataTable(ds ? withRadiusColumns(ds.df) : [], /*editable*/ false);
+    renderStatsUI(ds ? ds.df.map(r=>r.thickness) : []);
+  }
+
+  // ---------------------------------
+  // Tables & stats UI
+  // ---------------------------------
+  function renderDataTable(rows, editable=false) {
+    const table=$("#dataTable");
+    if(!rows || !rows.length) {
+      table.innerHTML = `<thead><tr><th>提示</th></tr></thead><tbody><tr><td class="hint">暂无数据。普通模式：导入 CSV；生成器：生成坐标并保存。</td></tr></tbody>`;
+      return;
+    }
+    if(!editable) {
+      $("#tableTitle").textContent = "数据表（X, Y, Radius, Thickness）";
+      const head = `<thead><tr>
+        <th>#</th><th>X (mm)</th><th>Y (mm)</th><th>Radius (mm)</th><th>Thickness (μm)</th>
+      </tr></thead>`;
+      const body = rows.map((r,i)=>`
+        <tr><td>${i+1}</td><td>${Number(r.x).toFixed(2)}</td><td>${Number(r.y).toFixed(2)}</td><td>${Number(r.radius).toFixed(2)}</td><td>${Number(r.thickness).toFixed(4)}</td></tr>
+      `).join("");
+      table.innerHTML = head + `<tbody>${body}</tbody>`;
+    } else {
+      $("#tableTitle").textContent = "生成器数据录入（point_id, x, y, radius, thickness）";
+      const head = `<thead><tr>
+        <th>Point ID</th><th>X (mm)</th><th>Y (mm)</th><th>Radius (mm)</th><th>Thickness (μm，可编辑)</th>
+      </tr></thead>`;
+      const body = rows.map((r, idx)=>`
+        <tr>
+          <td>${r.point_id}</td>
+          <td>${Number(r.x).toFixed(2)}</td>
+          <td>${Number(r.y).toFixed(2)}</td>
+          <td>${Number(r.radius).toFixed(2)}</td>
+          <td><input class="cell" data-idx="${idx}" value="${esc(r.thickness ?? "")}" placeholder="留空=无数据"/></td>
+        </tr>
+      `).join("");
+      table.innerHTML = head + `<tbody>${body}</tbody>`;
+      $$("#dataTable input.cell").forEach(inp=>{
+        inp.addEventListener("input", (e)=>{
+          const i = Number(e.target.getAttribute("data-idx"));
+          state.gen_df[i].thickness = e.target.value;
+        });
+      });
+    }
+  }
+
+  function renderStatsUI(ts) {
+    const arr = ts.map(Number).filter(v=>Number.isFinite(v));
+    const kpi=$("#kpiBox");
+    const st=$("#statsTable");
+    if(!arr.length) {
+      kpi.innerHTML = "";
+      st.innerHTML = `<thead><tr><th>提示</th></tr></thead><tbody><tr><td class="hint">暂无统计：请先导入/保存并渲染。</td></tr></tbody>`;
+      return;
+    }
+    const mean = arr.reduce((a,b)=>a+b,0)/arr.length;
+    const minV = Math.min(...arr);
+    const maxV = Math.max(...arr);
+    const range = maxV - minV;
+    let std=0;
+    if(arr.length>1) {
+      std = Math.sqrt(arr.reduce((acc,v)=>acc + (v-mean)*(v-mean),0)/(arr.length-1));
+    }
+    const kpiKeys = [
+      ["count", arr.length],
+      ["mean", mean],
+      ["std", std],
+      ["range", range],
+    ];
+    kpi.innerHTML = kpiKeys.map(([k,v])=>`
+      <div class="box"><b>${k}</b><span>${typeof v==="number" ? v.toFixed(6) : v}</span></div>
+    `).join("");
+
+    const rows = computeStatistics(arr);
+    const head = `<thead><tr><th>特征名</th><th>公式</th><th>计算结果</th><th>单位</th></tr></thead>`;
+    const body = rows.map(r=>{
+      const val = r[2];
+      const vs = (typeof val === "number" && Number.isFinite(val)) ? val.toFixed(6) : String(val);
+      return `<tr><td>${esc(r[0])}</td><td style="font-family:var(--mono)">${esc(r[1])}</td><td style="font-family:var(--mono)">${vs}</td><td>${esc(r[3])}</td></tr>`;
+    }).join("");
+    st.innerHTML = head + `<tbody>${body}</tbody>`;
+  }
+
+  // ---------------------------------
+  // Rendering pipeline
+  // ---------------------------------
+  async function renderAll() {
+    const [nm, ds] = getActiveDataset();
+    if(!ds) { setStatus("请先选择/创建数据集", "err"); return; }
+
+    // persist ds settings back to store (like streamlit)
+    ds.wafer_inch = Number($("#waferInch").value);
+    ds.cmap = $("#cmap").value;
+    ds.spec_upper = parseNullable($("#specUp").value);
+    ds.spec_lower = parseNullable($("#specLo").value);
+
+    const view_center = [Number($("#tvCx").value||0), Number($("#tvCy").value||0)];
+    const view_zoom = Number($("#tvZoom").value||1.0);
+
+    const cam = [Number($("#eyeX").value||1.7), Number($("#eyeY").value||1.7), Number($("#eyeZ").value||1.2)];
+    const z_scale = Number($("#zScale").value||10);
+    const z_aspect = Number($("#zAspect").value||2.5);
+
+    setStatus("插值/渲染中（IDW 使用 Worker）...");
+    await makeTopViewHeatmap(ds, view_center, view_zoom);
+    await make3DSurface(ds, cam, z_scale, z_aspect);
+
+    renderDataTable(withRadiusColumns(ds.df), false);
+    renderStatsUI(ds.df.map(r=>r.thickness));
+    setStatus("渲染完成", "ok");
+  }
+
+  // ---------------------------------
+  // Generator mode: preview + save
+  // ---------------------------------
+  function renderGeneratorPreview() {
+    if(!state.gen_df || !state.gen_df.length) {
+      renderDataTable([], true);
+      Plotly.purge("plotTop"); Plotly.purge("plot3d");
+      $("#plotTop").innerHTML = `<div class="hint" style="padding:12px">请先生成坐标表（左侧生成器）。</div>`;
+      $("#plot3d").innerHTML = `<div class="hint" style="padding:12px">生成器预览只显示点位；保存后到普通模式渲染。</div>`;
+      return;
+    }
+
+    renderDataTable(state.gen_df, true);
+
+    const inch = Number($("#genInch").value);
+    const radius = waferRadiusMM(inch);
+
+    const labels = state.gen_df.map(r=>String(r.point_id));
+    const trace = {
+      type:"scatter",
+      mode:"markers+text",
+      x: state.gen_df.map(r=>r.x),
+      y: state.gen_df.map(r=>r.y),
+      marker:{size:12, color:"red"},
+      text: labels,
+      textposition:"top center",
+      textfont:{size:14, color:"red", family:"Arial Black"},
+      showlegend:false,
+    };
+    const boundary = circleBoundaryTrace(radius);
+    Plotly.newPlot("plotTop", [boundary, trace], {
+      title:"点位分布预览 (Preview)",
+      width:800, height:700,
+      margin:{l:20,r:20,t:40,b:20},
+      xaxis:{range:[-radius*1.1, radius*1.1], scaleanchor:"y", scaleratio:1, zeroline:true, showgrid:true},
+      yaxis:{range:[-radius*1.1, radius*1.1], zeroline:true, showgrid:true},
+      hovermode:"closest",
+    }, {responsive:true});
+
+    $("#plot3d").innerHTML = `<div class="hint" style="padding:12px">生成器预览不做 3D。保存为数据集后去普通模式渲染。</div>`;
+  }
+
+  function downloadTemplateCSV() {
+    if(!state.gen_df || !state.gen_df.length) throw new Error("请先生成坐标表");
+    const header = "point_id,x,y,radius,thickness\n";
+    const body = state.gen_df.map(r=>`${r.point_id},${Number(r.x).toFixed(2)},${Number(r.y).toFixed(2)},${Number(r.radius).toFixed(2)},`).join("\n");
+    downloadText("template.csv", header+body, "text/csv");
+  }
+
+  async function saveGeneratorAsDataset() {
+    if(!state.gen_df || !state.gen_df.length) throw new Error("请先生成坐标表");
+    const valid = state.gen_df.map(r=> {
+      const t = Number(String(r.thickness||"").trim());
+      if(!Number.isFinite(t)) return null;
+      return {x:r.x, y:r.y, thickness:t};
+    }).filter(Boolean);
+    if(!valid.length) throw new Error("没有有效 thickness 数据（全为空或无效）");
+
+    const name = ($("#genName").value || "").trim() || `GEN ${$("#genPat").value} ${new Date().toLocaleTimeString().replaceAll(":","")}`;
+    registerDataset(name, valid, Number($("#genInch").value), "viridis", null, null);
+    setStatus(`已保存为数据集：${state.active_ds}（有效点 ${valid.length}）`, "ok");
+    // back to normal mode
+    activateMode("normal");
+  }
+
+  // ---------------------------------
+  // Generator parameter UI (match app_v6.py)
+  // ---------------------------------
+  function renderGenParamUI() {
+    const pat = $("#genPat").value;
+    const box = $("#genParamBox");
+    let html = "";
+    if(pat === "十字交叉 (Cross)") {
+      html += `<label>每臂点数（1~15）</label><input id="genArm" type="number" value="3" min="1" max="15" step="1"/>`;
+    } else if(pat === "同心圆 (Concentric)") {
+      html += `<div class="row">
+        <div><label>圈数（1~10）</label><input id="genRings" type="number" value="3" min="1" max="10" step="1"/></div>
+        <div><label>每圈点数（4~32，步长4）</label><input id="genPPR" type="number" value="8" min="4" max="32" step="4"/></div>
+      </div>`;
+    } else if(pat === "均匀网格 (Grid)") {
+      html += `<label>网格间距 (mm，>=5)</label><input id="genStep" type="number" value="30.0" min="5" step="1"/>`;
+    } else if(pat === "同心圆25点 (1+4+8+12)") {
+      html += `<div class="hint">中心1点 + 第一圈4点 + 第二圈8点 + 第三圈12点。</div>
+               <label>整体旋转角度 (deg，-30~30)</label><input id="genRot25" type="number" value="0" min="-30" max="30" step="1"/>`;
+    } else if(pat === "SZU 25point") {
+      html += `<div class="hint">中心1点 + 十字4点 + 中圈8点（错位）+ 外圈12点（每30°）。</div>
+               <label>整体旋转角度 (deg，-30~30)</label><input id="genRotSZU" type="number" value="0" min="-30" max="30" step="1"/>`;
+    } else if(pat === "FAB 25点模板 (Fab25)") {
+      html += `<div class="hint">固定 25 点模板（无额外参数）。</div>`;
+    }
+    box.innerHTML = html;
+  }
+
+  async function buildGeneratorTable() {
+    const inch = Number($("#genInch").value);
+    const radius = waferRadiusMM(inch);
+    const ee = Number($("#genEE").value||0);
+    const pat = $("#genPat").value;
+
+    let params = {};
+    if(pat === "十字交叉 (Cross)") {
+      params.points_per_arm = Number($("#genArm")?.value ?? 3);
+    } else if(pat === "同心圆 (Concentric)") {
+      params.n_rings = Number($("#genRings")?.value ?? 3);
+      params.pts_per_ring = Number($("#genPPR")?.value ?? 8);
+    } else if(pat === "均匀网格 (Grid)") {
+      params.grid_step = Number($("#genStep")?.value ?? 30.0);
+    } else if(pat === "同心圆25点 (1+4+8+12)") {
+      params.rotate_deg = Number($("#genRot25")?.value ?? 0.0);
+    } else if(pat === "SZU 25point") {
+      params.rotate_deg = Number($("#genRotSZU")?.value ?? 0.0);
+    }
+
+    if(state.usePython && state.pyodide) {
+      // Use python generate_pattern_coords
+      const py = state.pyodide;
+      py.globals.set("pat_js", pat);
+      py.globals.set("r_js", radius);
+      py.globals.set("ee_js", ee);
+      // kwargs via dict
+      py.globals.set("kw_js", params);
+      const out = py.runPython(`
+df = generate_pattern_coords(pat_js, r_js, ee_js, **kw_js)
+df.to_dict(orient="records")
+`).toJs();
+      state.gen_df = out.map(r=>({
+        point_id: Number(r.point_id),
+        x: Number(r.x),
+        y: Number(r.y),
+        radius: Number(r.radius),
+        thickness: "",
+      }));
+    } else {
+      state.gen_df = generatePatternCoords(pat, radius, ee, params);
+    }
+    $("#btnGenSave").disabled = false;
+    $("#btnGenDlTpl").disabled = false;
+    renderGeneratorPreview();
+    setStatus("已生成坐标表（请录入 thickness）", "ok");
+  }
+
+  // ---------------------------------
+  // Pyodide load button
+  // ---------------------------------
+  $("#btnDeps").onclick = async () => {
+    $("#btnDeps").disabled = true;
+    await ensurePyodide();
+    $("#btnDeps").disabled = false;
+  };
+
+  // ---------------------------------
+  // Self test: check core functions and worker pipeline
+  // ---------------------------------
+  async function selfTest() {
+    const report = [];
+    function ok(msg){ report.push("OK  " + msg); }
+    function fail(msg){ report.push("FAIL " + msg); }
+    try {
+      // pattern counts
+      const r = waferRadiusMM(8);
+      const ee=3;
+      const p1 = generatePatternCoords("同心圆25点 (1+4+8+12)", r, ee, {rotate_deg:0});
+      if(p1.length===25) ok("pattern 1+4+8+12 => 25 points"); else fail("pattern 1+4+8+12 count=" + p1.length);
+      const p2 = generatePatternCoords("FAB 25点模板 (Fab25)", r, ee, {});
+      if(p2.length===25) ok("pattern Fab25 => 25 points"); else fail("pattern Fab25 count=" + p2.length);
+      const p3 = generatePatternCoords("SZU 25point", r, ee, {rotate_deg:0});
+      if(p3.length===25) ok("pattern SZU => 25 points"); else fail("pattern SZU count=" + p3.length);
+
+      // stats
+      const stats = computeStatistics([1,2,3,4,5]);
+      if(stats.length>=10) ok("computeStatistics rows=" + stats.length); else fail("computeStatistics too few rows");
+      // idw worker
+      const xs=[0,10,-10], ys=[0,10,-10], ts=[1,2,3];
+      const g = await idwGrid(xs,ys,ts, 50, 50);
+      if(g && g.z && g.z.length===50) ok("idwGrid returns gridRes"); else fail("idwGrid bad result");
+      ok("Self test done");
+    } catch(e) {
+      fail("Exception: " + e.message);
+    }
+    return report.join("\n");
+  }
+
+  $("#btnSelfTest").onclick = async ()=>{
+    try {
+      setStatus("自检中...");
+      const r = await selfTest();
+      setStatus("自检完成（见下方内容）", "ok");
+      $("#statusBox").textContent += "\n" + r;
+    } catch(e) {
+      setStatus("自检失败：" + e.message, "err");
+    }
+  };
+
+  // ---------------------------------
+  // Reset
+  // ---------------------------------
+  $("#btnReset").onclick = () => {
+    state.datasets.clear();
+    state.active_ds = null;
+    state.gen_df = null;
+    state.lastRender.topFigReady = false;
+    state.lastRender.surfFigReady = false;
+    refreshDatasetUI();
+    Plotly.purge("plotTop");
+    Plotly.purge("plot3d");
+    $("#plotTop").innerHTML = "";
+    $("#plot3d").innerHTML = "";
+    setStatus("已重置（不清除浏览器缓存）", "ok");
+  };
+
+  // ---------------------------------
+  // Mode switching
+  // ---------------------------------
+  function activateMode(mode) {
+    if(mode==="normal") {
+      $("#sideNormal").style.display = "block";
+      $("#sideGen").style.display = "none";
+      $$(".tab[data-mode]").forEach(t=>t.classList.toggle("active", t.getAttribute("data-mode")==="normal"));
+      refreshDatasetUI();
+    } else {
+      $("#sideNormal").style.display = "none";
+      $("#sideGen").style.display = "block";
+      $$(".tab[data-mode]").forEach(t=>t.classList.toggle("active", t.getAttribute("data-mode")==="gen"));
+      renderGenParamUI();
+      renderGeneratorPreview();
+    }
+  }
+  window.__WaferApp.core.activateMode = activateMode;
+
+  $$(".tab[data-mode]").forEach(t=>t.addEventListener("click", ()=>activateMode(t.getAttribute("data-mode"))));
+
+  // Tabs (view/stats)
+  $$(".main .tab").forEach(t=>{
+    t.addEventListener("click", ()=>{
+      $$(".main .tab").forEach(x=>x.classList.remove("active"));
+      t.classList.add("active");
+      const tab = t.getAttribute("data-tab");
+      $("#tabView").classList.toggle("active", tab==="view");
+      $("#tabStats").classList.toggle("active", tab==="stats");
+    });
+  });
+
+  // ---------------------------------
+  // Dataset UI events
+  // ---------------------------------
+  $("#dsSelect").onchange = (e)=>{
+    state.active_ds = e.target.value;
+    state.lastRender.topFigReady = false;
+    state.lastRender.surfFigReady = false;
+    refreshDatasetUI();
+  };
+
+  $("#btnRename").onclick = ()=>{
+    const [nm, ds] = getActiveDataset();
+    if(!ds) return;
+    const newName = $("#dsRename").value;
+    renameDataset(nm, newName);
+    setStatus("已重命名为：" + state.active_ds, "ok");
+  };
+
+  $("#btnDelete").onclick = ()=>{
+    const [nm, ds] = getActiveDataset();
+    if(!ds) return;
+    if(confirm(`确认删除数据集：${nm} ?`)) {
+      deleteDataset(nm);
+      setStatus("已删除", "ok");
+    }
+  };
+
+  // ---------------------------------
+  // Import events
+  // ---------------------------------
+  $("#csvFile").addEventListener("change", (e)=>{
+    const f = e.target.files?.[0];
+    $("#btnImport").disabled = !f;
+    if(f) {
+      const dname = `${f.name} ${new Date().toLocaleTimeString().replaceAll(":","")}`;
+      if(!($("#importName").value||"").trim()) $("#importName").value = dname;
+    }
+  });
+
+  $("#btnImport").onclick = async ()=>{
+    try {
+      const f = $("#csvFile").files?.[0];
+      if(!f) return;
+      const text = await f.text();
+      const rows = parseCSV(text);
+      const unit = $("#importUnit").value;
+      const wafer = Number($("#importWaferInch").value);
+      const ts = convertToUm(rows.map(r=>r.thickness), unit==="a" ? "Å" : "μm");
+      const rows2 = rows.map((r,i)=>({x:r.x, y:r.y, thickness: ts[i]}));
+      const name = ($("#importName").value || f.name).trim();
+      registerDataset(name, rows2, wafer, "viridis", null, null);
+      setStatus("已导入数据集：" + state.active_ds + "（thickness 已统一为 μm）", "ok");
+      state.lastRender.topFigReady = false; state.lastRender.surfFigReady = false;
+      refreshDatasetUI();
+    } catch(e) {
+      setStatus("导入失败：" + e.message, "err");
+    }
+  };
+
+  // ---------------------------------
+  // Render / export
+  // ---------------------------------
+  $("#btnRender").onclick = async ()=>{
+    try {
+      await renderAll();
+    } catch(e) {
+      setStatus("渲染失败：" + e.message, "err");
+    }
+  };
+
+  $("#btnExportPPT").onclick = async ()=>{
+    try {
+      await exportPPTOneSlide();
+    } catch(e) {
+      setStatus("导出失败：" + e.message, "err");
+    }
+  };
+
+  $("#btnExportCSV").onclick = ()=>{
+    const [nm, ds] = getActiveDataset();
+    if(!ds) return;
+    const header = "x,y,thickness\n";
+    const body = ds.df.map(r=>`${Number(r.x).toFixed(6)},${Number(r.y).toFixed(6)},${Number(r.thickness).toFixed(6)}`).join("\n");
+    downloadText(`${nm}.csv`, header+body, "text/csv");
+  };
+
+  // ---------------------------------
+  // Generator events
+  // ---------------------------------
+  $("#genPat").onchange = ()=>renderGenParamUI();
+  $("#btnGenBuild").onclick = async ()=>{
+    try {
+      await buildGeneratorTable();
+    } catch(e) {
+      setStatus("生成失败：" + e.message, "err");
+    }
+  };
+  $("#btnGenSave").onclick = async ()=>{
+    try {
+      await saveGeneratorAsDataset();
+      $("#btnGenSave").disabled = true;
+    } catch(e) {
+      setStatus("保存失败：" + e.message, "err");
+    }
+  };
+  $("#btnGenDlTpl").onclick = ()=>{
+    try {
+      downloadTemplateCSV();
+      setStatus("模板已下载", "ok");
+    } catch(e) {
+      setStatus("下载失败：" + e.message, "err");
+    }
+  };
+
+  // ---------------------------------
+  // Init
+  // ---------------------------------
+  renderGenParamUI();
+  refreshDatasetUI();
+  activateMode("normal");
+  setStatus("未加载 Pyodide（将使用 JS 兜底逻辑）。你也可以点击“下载并载入 Pyodide”。", "ok");
+})();
+</script>
+</body>
+</html>
