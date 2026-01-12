@@ -203,7 +203,7 @@
       <div style="height:8px"></div>
       <div class="row">
         <div><label>Z 方向夸张倍数（仅影响显示，1~500）</label><input id="zScale" type="number" value="10" min="1" max="500" step="1"/></div>
-        <div><label>纵向视觉比例（仅影响显示，0.2~10）</label><input id="zAspect" type="number" value="2.5" min="0.2" max="10" step="0.1"/></div>
+        <div><label>纵向视觉比例（仅影响显示，0.2~10）</label><input id="zAspect" type="number" value="0.2" min="0.2" max="10" step="0.1"/></div>
       </div>
 
       <div class="sep"></div>
@@ -605,6 +605,65 @@
   }
 
   window.__WaferApp.core.generatePatternCoords = generatePatternCoords;
+
+// Ensure: always include center point, and ensure at least one (prefer 4) points near effective edge.
+function ensureCenterAndEdge(rows, effective_r) {
+  effective_r = Number(effective_r);
+  if(!rows) return rows;
+  const out = rows.slice(); // copy
+  const centerTol = 0.5; // mm: treat within 0.5mm as center
+  const edgeTol = 0.5;   // mm: consider within 0.5mm of edge as "near edge"
+  const nearEdgeR = Math.max(0, effective_r - edgeTol);
+
+  let hasCenter = false;
+  let hasNearEdge = false;
+  for(const r of out) {
+    const rad = Number(r.radius);
+    if(Number.isFinite(rad)) {
+      if(rad <= centerTol) hasCenter = true;
+      if(rad >= nearEdgeR) hasNearEdge = true;
+    }
+  }
+
+  // Next id
+  let nextId = 1;
+  if(out.length) {
+    const maxId = Math.max(...out.map(r=>Number(r.point_id)||0));
+    nextId = (Number.isFinite(maxId) ? maxId : 0) + 1;
+  }
+
+  if(!hasCenter) {
+    out.unshift({ point_id: nextId++, x: 0, y: 0, radius: 0, thickness: "" });
+  }
+
+  if(!hasNearEdge && effective_r > 0) {
+    const candidates = [
+      [ effective_r, 0 ],
+      [ -effective_r, 0 ],
+      [ 0, effective_r ],
+      [ 0, -effective_r ],
+    ];
+    const dupTol2 = 1.0 * 1.0; // 1mm tolerance
+    for(const [x,y] of candidates) {
+      let dup = false;
+      for(const rr of out) {
+        const dx = x - Number(rr.x);
+        const dy = y - Number(rr.y);
+        if(Number.isFinite(dx) && Number.isFinite(dy) && (dx*dx + dy*dy) <= dupTol2) { dup = true; break; }
+      }
+      if(!dup) {
+        const rad = Math.sqrt(x*x + y*y);
+        out.push({ point_id: nextId++, x, y, radius: rad, thickness: "" });
+      }
+    }
+  }
+
+  // Normalize point_id to 1..N (stable & Excel-friendly)
+  out.forEach((r,i)=>{ r.point_id = i+1; });
+
+  return out;
+}
+window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
 
   // ---------------------------------
   // CSV parsing (like load_csv)
@@ -1244,6 +1303,29 @@ def generate_pattern_coords(pattern_type, radius_mm, edge_exclude_mm, **kwargs):
           const i = Number(e.target.getAttribute("data-idx"));
           state.gen_df[i].thickness = e.target.value;
         });
+
+        // Excel-like paste: paste a column (multi-line) into consecutive rows
+        inp.addEventListener("paste", (e)=>{
+          const text = (e.clipboardData || window.clipboardData).getData("text");
+          if(!text) return;
+          // Only intercept multi-line or tabular paste
+          if(!text.includes("\n") && !text.includes("\t")) return;
+          e.preventDefault();
+
+          const start = Number(e.target.getAttribute("data-idx"));
+          const lines = text.replace(/\r/g, "").split("\n");
+          const values = lines
+            .map(line => (line.split("\t")[0] ?? "").trim())
+            .filter((v, idx, arr) => !(idx === arr.length-1 && v === "")); // drop trailing empty row
+
+          for(let k=0;k<values.length;k++){
+            const idx = start + k;
+            if(idx >= state.gen_df.length) break;
+            state.gen_df[idx].thickness = values[k];
+            const cell = document.querySelector(`#dataTable input.cell[data-idx="${idx}"]`);
+            if(cell) cell.value = values[k];
+          }
+        });
       });
     }
   }
@@ -1303,7 +1385,7 @@ def generate_pattern_coords(pattern_type, radius_mm, edge_exclude_mm, **kwargs):
 
     const cam = [Number($("#eyeX").value||1.7), Number($("#eyeY").value||1.7), Number($("#eyeZ").value||1.2)];
     const z_scale = Number($("#zScale").value||10);
-    const z_aspect = Number($("#zAspect").value||2.5);
+    const z_aspect = Number($("#zAspect").value||0.2);
 
     setStatus("插值/渲染中（IDW 使用 Worker）...");
     await makeTopViewHeatmap(ds, view_center, view_zoom);
@@ -1427,18 +1509,49 @@ def generate_pattern_coords(pattern_type, radius_mm, edge_exclude_mm, **kwargs):
       params.rotate_deg = Number($("#genRotSZU")?.value ?? 0.0);
     }
 
-    if(state.usePython && state.pyodide) {
-      // Use python generate_pattern_coords
+    
+if(state.usePython && state.pyodide) {
+      // Use python generate_pattern_coords (return JSON string to avoid PyProxy Map conversion)
       const py = state.pyodide;
       py.globals.set("pat_js", pat);
       py.globals.set("r_js", radius);
       py.globals.set("ee_js", ee);
-      // kwargs via dict
-      py.globals.set("kw_js", params);
-      const out = py.runPython(`
-df = generate_pattern_coords(pat_js, r_js, ee_js, **kw_js)
-df.to_dict(orient="records")
-`).toJs();
+
+      // kwargs via JSON to avoid JsProxy **kwargs TypeError
+      py.globals.set("kw_json_js", JSON.stringify(params));
+      const out_json = py.runPython(`import json, math
+import numpy as np
+
+# Robustly convert JS-side params into a real Python dict for **kwargs
+kw = {}
+try:
+    if kw_json_js is not None:
+        kw = json.loads(str(kw_json_js))
+except Exception:
+    try:
+        kw = kw_json_js.to_py()
+    except Exception:
+        kw = {}
+
+try:
+    if kw is None:
+        kw = {}
+    if not isinstance(kw, dict):
+        kw = dict(kw)
+except Exception:
+    kw = {}
+
+df = generate_pattern_coords(pat_js, r_js, ee_js, **kw)
+
+# Clean for JSON: inf/-inf/NaN -> None
+recs = df.replace([np.inf, -np.inf], np.nan).where(df.notna(), None).to_dict(orient="records")
+for r in recs:
+    for k, v in list(r.items()):
+        if isinstance(v, (float, np.floating)) and (not math.isfinite(float(v))):
+            r[k] = None
+
+json.dumps(recs, allow_nan=False)`);
+      const out = JSON.parse(out_json);
       state.gen_df = out.map(r=>({
         point_id: Number(r.point_id),
         x: Number(r.x),
@@ -1449,7 +1562,11 @@ df.to_dict(orient="records")
     } else {
       state.gen_df = generatePatternCoords(pat, radius, ee, params);
     }
-    $("#btnGenSave").disabled = false;
+    
+// Enforce center + near-edge points regardless of point count
+const effective_r = Math.max(0.0, radius - ee);
+state.gen_df = ensureCenterAndEdge(state.gen_df, effective_r);
+$("#btnGenSave").disabled = false;
     $("#btnGenDlTpl").disabled = false;
     renderGeneratorPreview();
     setStatus("已生成坐标表（请录入 thickness）", "ok");
