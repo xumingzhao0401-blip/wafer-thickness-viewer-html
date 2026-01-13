@@ -75,7 +75,7 @@
 <body>
 <header>
   <h1>Wafer Thickness Viewer — 单页版（Pyodide 可选）</h1>
-  <div class="sub">目标：数据集、插值热力图、3D surface、SPEC 平面、统计、模板生成器、PPT 导出。Pyodide 加载成功就用 Python 逻辑；否则自动用 JS 逻辑。</div>
+  <div class="sub">目标：功能对齐 app_v6.py（数据集、插值热力图、3D surface、SPEC 平面、统计、模板生成器、PPT 导出）。Pyodide 加载成功就用 Python 逻辑；否则自动用 JS 逻辑兜底（功能不丢）。</div>
 </header>
 
 <div class="wrap">
@@ -264,10 +264,11 @@
         <button id="btnGenBuild" class="primary">🔄 生成坐标表</button>
         <button id="btnGenSave" class="primary" disabled>✅ 保存为数据集</button>
         <button id="btnGenDlTpl" disabled>📥 下载 CSV 模板</button>
+        <button id="btnGenPaste" class="primary" disabled>📋 一键Paste厚度</button>
       </div>
 
       <div style="height:8px"></div>
-      <div class="hint">提示：预览会显示 point_id。保存为数据集后将只保留 x,y,thickness。</div>
+      <div class="hint">提示：预览会显示 point_id。保存为数据集后将只保留 x,y,thickness（与 app_v6.py 一致）。</div>
     </div>
   </aside>
 
@@ -1266,6 +1267,70 @@ def generate_pattern_coords(pattern_type, radius_mm, edge_exclude_mm, **kwargs):
   }
 
   // ---------------------------------
+  
+  // ---------------------------------
+  // One-click paste helpers (Excel/CSV friendly)
+  // ---------------------------------
+  function parsePastedValues(text) {
+    if (text == null) return [];
+    text = String(text).replace(/\r/g, "").trim();
+    if (!text) return [];
+    const values = [];
+    const lines = text.split("\n");
+    for (const line of lines) {
+      const cells = String(line).split("\t"); // Excel block paste
+      for (const cell of cells) {
+        const parts = String(cell).split(/[,，;；\s]+/); // also allow csv/space
+        for (const p of parts) {
+          const v = String(p).trim();
+          if (v !== "") values.push(v);
+        }
+      }
+    }
+    return values;
+  }
+
+  function applyThicknessValues(values, startIdx = 0) {
+    startIdx = Math.max(0, Number(startIdx) || 0);
+    if (!state.gen_df || !state.gen_df.length) return 0;
+    let written = 0;
+    for (let k = 0; k < values.length; k++) {
+      const idx = startIdx + k;
+      if (idx >= state.gen_df.length) break;
+      const v = values[k];
+      state.gen_df[idx].thickness = v;
+      const cell = document.querySelector(`#dataTable input.cell[data-idx="${idx}"]`);
+      if (cell) cell.value = v;
+      written++;
+    }
+    return written;
+  }
+
+  async function pasteThicknessFromClipboard(startIdx = 0) {
+    if (!state.gen_df || !state.gen_df.length) {
+      setStatus("请先生成坐标表", "err");
+      return;
+    }
+    if (!navigator.clipboard || !navigator.clipboard.readText) {
+      setStatus("浏览器不支持一键读取剪贴板；请在任意 thickness 单元格里直接 Ctrl+V 粘贴", "err");
+      return;
+    }
+    let text = "";
+    try {
+      text = await navigator.clipboard.readText();
+    } catch (e) {
+      setStatus("读取剪贴板失败：请在 HTTPS 或 localhost 下使用，并允许剪贴板权限", "err");
+      return;
+    }
+    const values = parsePastedValues(text);
+    if (!values.length) {
+      setStatus("剪贴板内容为空或无法解析", "err");
+      return;
+    }
+    const written = applyThicknessValues(values, startIdx);
+    setStatus(`已粘贴 thickness：${written} 个（从第 ${startIdx + 1} 行开始）`, "ok");
+  }
+
   // Tables & stats UI
   // ---------------------------------
   function renderDataTable(rows, editable=false) {
@@ -1304,27 +1369,17 @@ def generate_pattern_coords(pattern_type, radius_mm, edge_exclude_mm, **kwargs):
           state.gen_df[i].thickness = e.target.value;
         });
 
-        // Excel-like paste: paste a column (multi-line) into consecutive rows
+        // Excel-like paste: paste a block/column into consecutive rows
         inp.addEventListener("paste", (e)=>{
           const text = (e.clipboardData || window.clipboardData).getData("text");
           if(!text) return;
-          // Only intercept multi-line or tabular paste
-          if(!text.includes("\n") && !text.includes("\t")) return;
+          const values = parsePastedValues(text);
+          // single value -> let browser handle normal paste
+          if(values.length <= 1) return;
           e.preventDefault();
 
           const start = Number(e.target.getAttribute("data-idx"));
-          const lines = text.replace(/\r/g, "").split("\n");
-          const values = lines
-            .map(line => (line.split("\t")[0] ?? "").trim())
-            .filter((v, idx, arr) => !(idx === arr.length-1 && v === "")); // drop trailing empty row
-
-          for(let k=0;k<values.length;k++){
-            const idx = start + k;
-            if(idx >= state.gen_df.length) break;
-            state.gen_df[idx].thickness = values[k];
-            const cell = document.querySelector(`#dataTable input.cell[data-idx="${idx}"]`);
-            if(cell) cell.value = values[k];
-          }
+          applyThicknessValues(values, start);
         });
       });
     }
@@ -1568,6 +1623,7 @@ const effective_r = Math.max(0.0, radius - ee);
 state.gen_df = ensureCenterAndEdge(state.gen_df, effective_r);
 $("#btnGenSave").disabled = false;
     $("#btnGenDlTpl").disabled = false;
+    $("#btnGenPaste").disabled = false;
     renderGeneratorPreview();
     setStatus("已生成坐标表（请录入 thickness）", "ok");
   }
@@ -1784,6 +1840,15 @@ $("#btnGenSave").disabled = false;
       setStatus("模板已下载", "ok");
     } catch(e) {
       setStatus("下载失败：" + e.message, "err");
+    }
+  };
+
+  $("#btnGenPaste").onclick = async ()=>{
+    try {
+      // One-click paste from clipboard, fill from first row
+      await pasteThicknessFromClipboard(0);
+    } catch(e) {
+      setStatus("粘贴失败：" + e.message, "err");
     }
   };
 
