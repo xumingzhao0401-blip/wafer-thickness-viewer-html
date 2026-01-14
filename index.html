@@ -166,6 +166,7 @@
         <div>
           <label>色图 (colormap)</label>
           <select id="cmap">
+            <option value="rygbp" selected>红黄绿蓝紫 (RYGBP)</option>
             <option>viridis</option><option>plasma</option><option>inferno</option><option>magma</option><option>coolwarm</option><option>cividis</option>
           </select>
         </div>
@@ -379,7 +380,7 @@
     return name;
   }
 
-  function registerDataset(name, dfRows, wafer_inch, cmap="viridis", spec_upper=null, spec_lower=null) {
+  function registerDataset(name, dfRows, wafer_inch, cmap="rygbp", spec_upper=null, spec_lower=null) {
     const nm = uniqueName(name);
     state.datasets.set(nm, {
       df: dfRows.map(r => ({ x:Number(r.x), y:Number(r.y), thickness:Number(r.thickness) })),
@@ -770,7 +771,9 @@ window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
     const ts = rows.map(r=>Number(r.thickness));
     const radius_mm = waferRadiusMM($("#waferInch").value);
     const gridRes = Number($("#gridRes").value);
-    const cmap = $("#cmap").value;
+    const cmapVal = $("#cmap").value;
+    const colorscale = getColorscale(cmapVal);
+    const cr = computeAdaptiveColorRange(ts);
     const showLabels = $("#showLabels").checked;
 
     const grid = await idwGrid(xs, ys, ts, radius_mm, gridRes, 2.0, 1e-6);
@@ -781,7 +784,9 @@ window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
       z:grid.z,
       x:grid.x,
       y:grid.y,
-      colorscale:cmap,
+      colorscale:colorscale,
+      zmin:(cr.zmin==null?undefined:cr.zmin),
+      zmax:(cr.zmax==null?undefined:cr.zmax),
       colorbar:{title:"Thickness (μm)", thickness:18, len:0.85},
       hovertemplate:"X=%{x:.2f}<br>Y=%{y:.2f}<br>T=%{z:.4f} μm<extra></extra>",
     });
@@ -835,7 +840,9 @@ window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
     const ts = rows.map(r=>Number(r.thickness));
     const radius_mm = waferRadiusMM($("#waferInch").value);
     const gridRes = Number($("#gridRes").value);
-    const cmap = $("#cmap").value;
+    const cmapVal = $("#cmap").value;
+    const colorscale = getColorscale(cmapVal);
+    const cr = computeAdaptiveColorRange(ts);
     const specUpper = parseNullable($("#specUp").value);
     const specLower = parseNullable($("#specLo").value);
 
@@ -845,8 +852,11 @@ window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
     const data = [{
       type:"surface",
       x:grid.x, y:grid.y, z:Zscaled,
-      colorscale:cmap,
-      hovertemplate:"X=%{x:.2f}<br>Y=%{y:.2f}<br>T=%{z:.4f} (scaled)<extra></extra>",
+      surfacecolor:grid.z,
+      colorscale:colorscale,
+      cmin:(cr.zmin==null?undefined:cr.zmin),
+      cmax:(cr.zmax==null?undefined:cr.zmax),
+      hovertemplate:"X=%{x:.2f}<br>Y=%{y:.2f}<br>T=%{surfacecolor:.4f} μm<extra></extra>",
       showscale:true,
     }];
 
@@ -922,6 +932,53 @@ window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
       const v = Number(s);
       return Number.isFinite(v) ? v : null;
     } catch(e) { return null; }
+  }
+
+  // ---------------------------------
+  // Color logic: user-friendly rainbow (red→yellow→green→blue→purple) + adaptive range
+  // - If within-wafer variation is truly tiny, we intentionally widen the color range so the color change is subtle.
+  // ---------------------------------
+  function getColorscale(cmapValue){
+    const v = String(cmapValue || "").trim();
+    if(v === "rygbp") {
+      return [
+        [0.00, "red"],
+        [0.25, "yellow"],
+        [0.50, "green"],
+        [0.75, "blue"],
+        [1.00, "purple"],
+      ];
+    }
+    return v || "viridis";
+  }
+
+  function computeAdaptiveColorRange(values){
+    const arr = (values || []).map(Number).filter(v=>Number.isFinite(v));
+    if(!arr.length) return {zmin:null, zmax:null, min:null, max:null, mean:null, range:null, rel:null};
+    const minV = Math.min(...arr);
+    const maxV = Math.max(...arr);
+    const mean = arr.reduce((a,b)=>a+b,0) / arr.length;
+    const rng = maxV - minV;
+    const denom = Math.max(Math.abs(mean), 1e-9);
+    const rel = rng / denom;
+
+    // Expand color span when rel is very small -> less aggressive color changes.
+    let target = rng;
+    if(rel < 0.005) {        // <0.5%
+      target = Math.max(rng * 3.0, denom * 0.010); // at least 1% span
+    } else if(rel < 0.020) { // <2%
+      target = Math.max(rng * 1.5, denom * 0.005); // at least 0.5% span
+    } else {
+      target = rng;
+    }
+    // Center around mean, but always cover the real min/max
+    let zmin = mean - target/2;
+    let zmax = mean + target/2;
+    const pad = 1e-9;
+    zmin = Math.min(zmin, minV - pad);
+    zmax = Math.max(zmax, maxV + pad);
+    if(!(zmax > zmin)) { zmin = minV - 1e-6; zmax = maxV + 1e-6; }
+    return {zmin, zmax, min:minV, max:maxV, mean, range:rng, rel};
   }
 
   function downloadText(filename, text, mime="text/plain") {
@@ -1510,7 +1567,7 @@ def generate_pattern_coords(pattern_type, radius_mm, edge_exclude_mm, **kwargs):
     if(!valid.length) throw new Error("没有有效 thickness 数据（全为空或无效）");
 
     const name = ($("#genName").value || "").trim() || `GEN ${$("#genPat").value} ${new Date().toLocaleTimeString().replaceAll(":","")}`;
-    registerDataset(name, valid, Number($("#genInch").value), "viridis", null, null);
+    registerDataset(name, valid, Number($("#genInch").value), "rygbp", null, null);
     setStatus(`已保存为数据集：${state.active_ds}（有效点 ${valid.length}）`, "ok");
     // back to normal mode
     activateMode("normal");
@@ -1618,9 +1675,21 @@ json.dumps(recs, allow_nan=False)`);
       state.gen_df = generatePatternCoords(pat, radius, ee, params);
     }
     
-// Enforce center + near-edge points regardless of point count
-const effective_r = Math.max(0.0, radius - ee);
-state.gen_df = ensureCenterAndEdge(state.gen_df, effective_r);
+// Fixed 25-point templates: enforce exactly 25 points (drop any extras) and DO NOT auto-add points.
+// Other patterns keep the previous behavior: ensure center + near-edge points.
+const fixed25 = new Set(["同心圆25点 (1+4+8+12)", "SZU 25point", "FAB 25点模板 (Fab25)"]);
+if (fixed25.has(pat)) {
+  state.gen_df = (state.gen_df || []).slice(0, 25);
+  // Keep original point_id if already 1..25; otherwise normalize for table/template friendliness
+  state.gen_df.forEach((r, i) => {
+    const pid = Number(r.point_id);
+    if (!(pid >= 1 && pid <= 25)) r.point_id = i + 1;
+    r.radius = Math.sqrt(Number(r.x) * Number(r.x) + Number(r.y) * Number(r.y));
+  });
+} else {
+  const effective_r = Math.max(0.0, radius - ee);
+  state.gen_df = ensureCenterAndEdge(state.gen_df, effective_r);
+}
 $("#btnGenSave").disabled = false;
     $("#btnGenDlTpl").disabled = false;
     $("#btnGenPaste").disabled = false;
@@ -1779,7 +1848,7 @@ $("#btnGenSave").disabled = false;
       const ts = convertToUm(rows.map(r=>r.thickness), unit==="a" ? "Å" : "μm");
       const rows2 = rows.map((r,i)=>({x:r.x, y:r.y, thickness: ts[i]}));
       const name = ($("#importName").value || f.name).trim();
-      registerDataset(name, rows2, wafer, "viridis", null, null);
+      registerDataset(name, rows2, wafer, "rygbp", null, null);
       setStatus("已导入数据集：" + state.active_ds + "（thickness 已统一为 μm）", "ok");
       state.lastRender.topFigReady = false; state.lastRender.surfFigReady = false;
       refreshDatasetUI();
