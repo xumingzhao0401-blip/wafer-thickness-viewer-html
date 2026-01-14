@@ -166,7 +166,7 @@
         <div>
           <label>色图 (colormap)</label>
           <select id="cmap">
-            <option value="rygbp" selected>红黄绿蓝紫 (RYGBP)</option>
+            <option value="rygbp" selected>薄→厚：紫蓝绿黄红</option>
             <option>viridis</option><option>plasma</option><option>inferno</option><option>magma</option><option>coolwarm</option><option>cividis</option>
           </select>
         </div>
@@ -935,18 +935,19 @@ window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
   }
 
   // ---------------------------------
-  // Color logic: user-friendly rainbow (red→yellow→green→blue→purple) + adaptive range
+  // Color logic: user-friendly rainbow (thin→thick: purple→blue→green→yellow→red) + adaptive range
   // - If within-wafer variation is truly tiny, we intentionally widen the color range so the color change is subtle.
   // ---------------------------------
   function getColorscale(cmapValue){
     const v = String(cmapValue || "").trim();
     if(v === "rygbp") {
+      // thin → thick : purple/blue → red
       return [
-        [0.00, "red"],
-        [0.25, "yellow"],
+        [0.00, "purple"],
+        [0.25, "blue"],
         [0.50, "green"],
-        [0.75, "blue"],
-        [1.00, "purple"],
+        [0.75, "yellow"],
+        [1.00, "red"],
       ];
     }
     return v || "viridis";
