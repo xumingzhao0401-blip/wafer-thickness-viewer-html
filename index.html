@@ -184,6 +184,22 @@
       <div style="height:8px"></div>
       <label class="chip"><input id="showLabels" type="checkbox" checked /> 顶视图显示厚度标签</label>
 
+      <div style="height:8px"></div>
+      <label>插值方法（影响顶视图 / 3D / GLB / 视频，改后需重新渲染）</label>
+      <select id="interpMethod">
+        <option value="nearest" selected>最近邻阶梯（不发明中间值，判读首选）</option>
+        <option value="idw">IDW 平滑（仅看趋势，勿据此读数）</option>
+        <option value="none">不插值（只显示实测点）</option>
+      </select>
+      <div style="height:6px"></div>
+      <label class="chip"><input id="stepColors" type="checkbox" checked /> 分级色阶（10 级台阶色，避免连续渐变暗示虚假精度）</label>
+      <label class="chip"><input id="limitToData" type="checkbox" checked /> 只画到最外圈测点（不外推到晶圆边缘）</label>
+      <div class="row" style="margin-top:4px">
+        <div><label class="chip"><input id="maskFar" type="checkbox" /> 遮罩低置信区</label></div>
+        <div><label>距最近测点 &gt; (mm) 不着色</label><input id="maskDist" type="number" value="30" min="5" step="5"/></div>
+      </div>
+      <div class="hint">防误读说明：伪彩填充都是<b>估算</b>，只有带标签的点是实测值。最近邻阶梯图每个色块等于最近测点的值，不会在两点之间编出中间厚度；IDW 平滑图会把台阶抹成斜坡（例如三圈台阶型分布），判读数值时勿用。鼠标悬停时填充区显示“估算 T≈”，测点显示“实测 T=”。</div>
+
       <div class="sep"></div>
       <h2 style="margin-top:0">顶视图视窗（用于导出 PPT 的“当前视图”）</h2>
       <div class="row">
@@ -208,7 +224,7 @@
       </div>
 
       <div class="sep"></div>
-      <h2 style="margin-top:0">导出到一页 PPT</h2>
+      <h2 style="margin-top:0">导出（PPT / 3D 模型 / 旋转视频）</h2>
       <label>PPT 标题</label>
       <input id="pptTitle" type="text" placeholder="默认：Wafer Thickness Report - 数据集名" />
       <div style="height:8px"></div>
@@ -216,7 +232,10 @@
         <button id="btnRender" class="primary">渲染图形</button>
         <button id="btnExportPPT" class="primary">📤 生成 PPT 并下载</button>
         <button id="btnExportCSV">📄 导出当前数据集 CSV</button>
+        <button id="btnExportGLB">🧊 导出 3D 模型 (.glb)</button>
+        <button id="btnExportVideo">🎬 导出旋转视频 (.mp4)</button>
       </div>
+      <div class="hint">.glb 可在 PowerPoint 365 / 2021+ 中「插入 → 3D 模型」后拖动旋转（WPS 不支持，PPT 里请同时保留静态图）。旋转视频为曲面自动旋转一圈：浏览器支持 MP4 录制时导出 .mp4，否则回退 .webm。两种导出的 Z 均为归一化浮雕（非真实比例），颜色与当前色阶/插值方法一致，文件名含插值方法。</div>
       <div style="height:8px"></div>
       <div class="hint">坐标单位 mm；厚度内部统一 μm。若 Pyodide 未加载成功，将自动用 JS 计算与插值（功能不丢，但首次渲染速度取决于浏览器）。</div>
     </div>
@@ -693,7 +712,7 @@ window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
   // ---------------------------------
   const workerCode = `
   self.onmessage = (ev) => {
-    const {xs, ys, ts, radius, gridRes, power, eps} = ev.data;
+    const {xs, ys, ts, radius, gridRes, power, eps, method, limitR, maskDist} = ev.data;
     const n = gridRes|0;
     if(!xs || xs.length < 3) {
       self.postMessage({ok:false, err:"点数少于3，无法插值"});
@@ -715,16 +734,22 @@ window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
           Z[iy][ix] = null;
           continue;
         }
-        let wsum=0, tsum=0;
+        const cellR = Math.sqrt(x*x + y*y);
+        const lim = (limitR && limitR > 0) ? limitR : radius;
+        if(cellR > lim) { Z[iy][ix] = null; continue; }
+        let wsum=0, tsum=0, dmin=Infinity, tnear=null;
         for(let k=0;k<xs.length;k++) {
           const dx = x - xs[k];
           const dy = y - ys[k];
-          const dist = Math.sqrt(dx*dx + dy*dy) + eps;
+          const d0 = Math.sqrt(dx*dx + dy*dy);
+          if(d0 < dmin) { dmin = d0; tnear = ts[k]; }
+          const dist = d0 + eps;
           const w = 1.0 / Math.pow(dist, power);
           wsum += w;
           tsum += w * ts[k];
         }
-        Z[iy][ix] = tsum / wsum;
+        if(maskDist && maskDist > 0 && dmin > maskDist) { Z[iy][ix] = null; continue; }
+        Z[iy][ix] = (method === "nearest") ? tnear : (tsum / wsum);
       }
     }
     self.postMessage({ok:true, x:Array.from(xlin), y:Array.from(ylin), z:Z});
@@ -733,7 +758,7 @@ window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
   const workerURL = URL.createObjectURL(new Blob([workerCode], {type:"text/javascript"}));
   const idwWorker = new Worker(workerURL);
 
-  function idwGrid(xs, ys, ts, radius, gridRes, power=2.0, eps=1e-6) {
+  function idwGrid(xs, ys, ts, radius, gridRes, power=2.0, eps=1e-6, opts={}) {
     return new Promise((resolve, reject)=>{
       const handler = (ev) => {
         idwWorker.removeEventListener("message", handler);
@@ -742,9 +767,56 @@ window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
         else resolve(data);
       };
       idwWorker.addEventListener("message", handler);
-      idwWorker.postMessage({xs, ys, ts, radius, gridRes, power, eps});
+      idwWorker.postMessage({xs, ys, ts, radius, gridRes, power, eps,
+        method: opts.method || "idw",
+        limitR: (opts.limitR == null ? 0 : opts.limitR),
+        maskDist: (opts.maskDist == null ? 0 : opts.maskDist)});
     });
   }
+
+  // Display-grid builder shared by top view / 3D / GLB / video so every output
+  // uses the SAME interpolation method, data limit and stepped colour scale.
+  const INTERP_LABELS = {nearest: "最近邻阶梯（不发明中间值）", idw: "IDW 平滑（仅看趋势）", none: "不插值（仅实测点）"};
+  function getInterpOptions(rows) {
+    const method = ($("#interpMethod") ? $("#interpMethod").value : "nearest");
+    let maxR = 0;
+    for(const r of rows) { const rr = Math.hypot(Number(r.x), Number(r.y)); if(rr > maxR) maxR = rr; }
+    return {
+      method,
+      step: ($("#stepColors") ? $("#stepColors").checked : true),
+      limitR: ($("#limitToData") && $("#limitToData").checked) ? maxR : 0,
+      maskDist: ($("#maskFar") && $("#maskFar").checked) ? Math.max(5, Number($("#maskDist").value || 30)) : 0,
+      maxDataR: maxR,
+    };
+  }
+  function quantizeGridInPlace(grid, zmin, zmax, levels=10) {
+    if(!(zmax > zmin)) return grid;
+    for(const row of grid.z) for(let i=0;i<row.length;i++) {
+      const v = row[i];
+      if(v == null) continue;
+      const t = Math.min(1, Math.max(0, (v - zmin) / (zmax - zmin)));
+      row[i] = zmin + (Math.round(t * (levels - 1)) / (levels - 1)) * (zmax - zmin);
+    }
+    return grid;
+  }
+  async function buildDisplayGrid(ds, resCap=0) {
+    const rows = ds.df;
+    const xs = rows.map(r=>Number(r.x));
+    const ys = rows.map(r=>Number(r.y));
+    const ts = rows.map(r=>Number(r.thickness));
+    const radius_mm = waferRadiusMM($("#waferInch").value);
+    let gridRes = Number($("#gridRes").value);
+    if(resCap > 0) gridRes = Math.min(gridRes, resCap);
+    const cmapVal = $("#cmap").value;
+    const cr = computeAdaptiveColorRange(ts);
+    const opts = getInterpOptions(rows);
+    if(opts.method === "none") return {grid:null, xs, ys, ts, radius_mm, cmapVal, cr, opts};
+    const grid = await idwGrid(xs, ys, ts, radius_mm, gridRes, 2.0, 1e-6, opts);
+    if(opts.step) quantizeGridInPlace(grid, cr.zmin, cr.zmax, 10);
+    return {grid, xs, ys, ts, radius_mm, cmapVal, cr, opts};
+  }
+  window.__WaferApp.core.buildDisplayGrid = buildDisplayGrid;
+  window.__WaferApp.core.quantizeGridInPlace = quantizeGridInPlace;
 
   window.__WaferApp.core.idwGrid = idwGrid;
 
@@ -765,31 +837,24 @@ window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
   }
 
   async function makeTopViewHeatmap(ds, view_center, view_zoom) {
-    const rows = ds.df;
-    const xs = rows.map(r=>Number(r.x));
-    const ys = rows.map(r=>Number(r.y));
-    const ts = rows.map(r=>Number(r.thickness));
-    const radius_mm = waferRadiusMM($("#waferInch").value);
-    const gridRes = Number($("#gridRes").value);
-    const cmapVal = $("#cmap").value;
+    const {grid, xs, ys, ts, radius_mm, cmapVal, cr, opts} = await buildDisplayGrid(ds);
     const colorscale = getColorscale(cmapVal);
-    const cr = computeAdaptiveColorRange(ts);
     const showLabels = $("#showLabels").checked;
 
-    const grid = await idwGrid(xs, ys, ts, radius_mm, gridRes, 2.0, 1e-6);
-
     const figData = [];
-    figData.push({
-      type:"heatmap",
-      z:grid.z,
-      x:grid.x,
-      y:grid.y,
-      colorscale:colorscale,
-      zmin:(cr.zmin==null?undefined:cr.zmin),
-      zmax:(cr.zmax==null?undefined:cr.zmax),
-      colorbar:{title:"Thickness (μm)", thickness:18, len:0.85},
-      hovertemplate:"X=%{x:.2f}<br>Y=%{y:.2f}<br>T=%{z:.4f} μm<extra></extra>",
-    });
+    if(grid) {
+      figData.push({
+        type:"heatmap",
+        z:grid.z,
+        x:grid.x,
+        y:grid.y,
+        colorscale:colorscale,
+        zmin:(cr.zmin==null?undefined:cr.zmin),
+        zmax:(cr.zmax==null?undefined:cr.zmax),
+        colorbar:{title:"Thickness (μm)", thickness:18, len:0.85},
+        hovertemplate:"X=%{x:.2f}<br>Y=%{y:.2f}<br>估算 T≈%{z:.4f} μm（非实测）<extra></extra>",
+      });
+    }
 
     figData.push(circleBoundaryTrace(radius_mm));
 
@@ -800,7 +865,7 @@ window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
       marker:{size:8, color:"black", line:{width:1, color:"white"}},
       showlegend:false,
       text: ts.map(v=>Number(v).toFixed(4)),
-      hovertemplate:"X=%{x:.2f}<br>Y=%{y:.2f}<br>T=%{text} μm<extra></extra>",
+      hovertemplate:"X=%{x:.2f}<br>Y=%{y:.2f}<br>实测 T=%{text} μm<extra></extra>",
     });
 
     if(showLabels) {
@@ -823,7 +888,7 @@ window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
     const yr=[cy-half, cy+half];
 
     const layout={
-      title:"Top View Heatmap (μm)",
+      title:`Top View Heatmap (μm) - ${INTERP_LABELS[opts.method]}${opts.step && grid ? " · 10 级色阶" : ""}`,
       margin:{l:20,r:20,t:60,b:20},
       xaxis:{title:"X (mm)", scaleanchor:"y", scaleratio:1, range:xr},
       yaxis:{title:"Y (mm)", range:yr},
@@ -834,35 +899,29 @@ window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
   }
 
   async function make3DSurface(ds, cameraEye, z_scale, z_aspect) {
-    const rows = ds.df;
-    const xs = rows.map(r=>Number(r.x));
-    const ys = rows.map(r=>Number(r.y));
-    const ts = rows.map(r=>Number(r.thickness));
-    const radius_mm = waferRadiusMM($("#waferInch").value);
-    const gridRes = Number($("#gridRes").value);
-    const cmapVal = $("#cmap").value;
+    const {grid, xs, ys, ts, radius_mm, cmapVal, cr, opts} = await buildDisplayGrid(ds);
     const colorscale = getColorscale(cmapVal);
-    const cr = computeAdaptiveColorRange(ts);
     const specUpper = parseNullable($("#specUp").value);
     const specLower = parseNullable($("#specLo").value);
 
-    const grid = await idwGrid(xs, ys, ts, radius_mm, gridRes, 2.0, 1e-6);
-
-    const Zscaled = grid.z.map(row => row.map(v => v==null ? null : v*Number(z_scale)));
-    const data = [{
-      type:"surface",
-      x:grid.x, y:grid.y, z:Zscaled,
-      surfacecolor:grid.z,
-      colorscale:colorscale,
-      cmin:(cr.zmin==null?undefined:cr.zmin),
-      cmax:(cr.zmax==null?undefined:cr.zmax),
-      hovertemplate:"X=%{x:.2f}<br>Y=%{y:.2f}<br>T=%{surfacecolor:.4f} μm<extra></extra>",
-      showscale:true,
-    }];
+    const data = [];
+    if(grid) {
+      const Zscaled = grid.z.map(row => row.map(v => v==null ? null : v*Number(z_scale)));
+      data.push({
+        type:"surface",
+        x:grid.x, y:grid.y, z:Zscaled,
+        surfacecolor:grid.z,
+        colorscale:colorscale,
+        cmin:(cr.zmin==null?undefined:cr.zmin),
+        cmax:(cr.zmax==null?undefined:cr.zmax),
+        hovertemplate:"X=%{x:.2f}<br>Y=%{y:.2f}<br>估算 T≈%{surfacecolor:.4f} μm（非实测）<extra></extra>",
+        showscale:true,
+      });
+    }
 
     // spec planes
     const r2 = radius_mm*radius_mm;
-    if(specUpper !== null && Number.isFinite(specUpper)) {
+    if(grid && specUpper !== null && Number.isFinite(specUpper)) {
       const Zu = grid.y.map((yv, iy)=> grid.x.map((xv, ix) => {
         const x = xv, y = yv;
         const inside = (x*x + y*y) <= r2;
@@ -870,7 +929,7 @@ window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
       }));
       data.push({type:"surface", x:grid.x, y:grid.y, z:Zu, opacity:0.25, showscale:false, colorscale:[[0,"red"],[1,"red"]], hoverinfo:"skip", name:"USL"});
     }
-    if(specLower !== null && Number.isFinite(specLower)) {
+    if(grid && specLower !== null && Number.isFinite(specLower)) {
       const Zl = grid.y.map((yv, iy)=> grid.x.map((xv, ix) => {
         const x = xv, y = yv;
         const inside = (x*x + y*y) <= r2;
@@ -890,7 +949,7 @@ window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
     });
 
     const layout={
-      title:"3D Distribution (μm, Z scaled)",
+      title:`3D Distribution (μm, Z scaled) - ${INTERP_LABELS[opts.method]}`,
       scene:{
         xaxis:{title:"X (mm)"},
         yaxis:{title:"Y (mm)"},
@@ -980,6 +1039,244 @@ window.__WaferApp.core.ensureCenterAndEdge = ensureCenterAndEdge;
     zmax = Math.max(zmax, maxV + pad);
     if(!(zmax > zmin)) { zmin = minV - 1e-6; zmax = maxV + 1e-6; }
     return {zmin, zmax, min:minV, max:maxV, mean, range:rng, rel};
+  }
+
+  function downloadBlob(filename, blob) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 4000);
+  }
+
+  // ---------------------------------
+  // Colour lookup for GLB / video exports (RGB stops approximating the Plotly scales;
+  // "rygbp" matches getColorscale exactly). Values are mapped through the SAME
+  // adaptive colour range as the on-screen plots.
+  // ---------------------------------
+  const COLOR_STOPS = {
+    viridis: [[0,"#440154"],[0.125,"#482878"],[0.25,"#3f4788"],[0.375,"#31688e"],[0.5,"#26828e"],[0.625,"#35b779"],[0.75,"#6ece58"],[0.875,"#b5de2b"],[1,"#fde725"]],
+    plasma: [[0,"#0d0887"],[0.125,"#41049d"],[0.25,"#6a00a8"],[0.375,"#8f0da4"],[0.5,"#b12a90"],[0.625,"#cc4778"],[0.75,"#e16462"],[0.875,"#f2844b"],[1,"#f0f921"]],
+    inferno: [[0,"#000004"],[0.125,"#1b0c41"],[0.25,"#4a0c6b"],[0.375,"#781c6d"],[0.5,"#a52c60"],[0.625,"#cf4446"],[0.75,"#ed6925"],[0.875,"#fb9b06"],[1,"#fcffa4"]],
+    magma: [[0,"#000004"],[0.125,"#180f3d"],[0.25,"#440f76"],[0.375,"#721f81"],[0.5,"#9e2f7f"],[0.625,"#cd4071"],[0.75,"#f1605d"],[0.875,"#fd9668"],[1,"#fcfdbf"]],
+    cividis: [[0,"#00224e"],[0.125,"#41476b"],[0.25,"#7a7b78"],[0.375,"#a69c75"],[0.5,"#c4b56a"],[0.625,"#e4cf5b"],[0.75,"#fde724"],[0.875,"#fee838"],[1,"#fee838"]],
+    coolwarm: [[0,"#3b4cc0"],[0.25,"#849ebd"],[0.5,"#dddddd"],[0.75,"#e8a598"],[1,"#b40426"]],
+    rygbp: [[0,"#800080"],[0.25,"#0000ff"],[0.5,"#008000"],[0.75,"#ffff00"],[1,"#ff0000"]],
+  };
+  function hexRgb(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    return [((n>>16)&255)/255, ((n>>8)&255)/255, (n&255)/255];
+  }
+  function colorForValue(v, zmin, zmax, cmapVal) {
+    const stops = COLOR_STOPS[String(cmapVal || "viridis")] || COLOR_STOPS.viridis;
+    let t = (zmax > zmin) ? (v - zmin) / (zmax - zmin) : 0.5;
+    t = Math.min(1, Math.max(0, t));
+    for(let i=1;i<stops.length;i++) {
+      if(t <= stops[i][0]) {
+        const [t0,c0] = stops[i-1], [t1,c1] = stops[i];
+        const a = hexRgb(c0), b = hexRgb(c1);
+        const f = (t1 > t0) ? (t - t0) / (t1 - t0) : 0;
+        return [a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f, a[2]+(b[2]-a[2])*f];
+      }
+    }
+    return hexRgb(stops[stops.length-1][1]);
+  }
+  window.__WaferApp.core.colorForValue = colorForValue;
+
+  // ---------------------------------
+  // GLB export: binary glTF 2.0, vertex colours = thickness.
+  // Model XY = mm/100; height = (t - tmin)/(tmax - tmin) * 1.1 (normalized relief,
+  // NOT to scale - real thickness variation is sub-micron over a whole wafer).
+  // ---------------------------------
+  function buildGLBBuffer(grid, ts, cmapVal, cr) {
+    const tmin = Math.min(...ts), tmax = Math.max(...ts);
+    const range = (tmax - tmin) || 1;
+    const n = grid.z.length;
+    const idx = new Int32Array(n * n).fill(-1);
+    const verts = [], cols = [];
+    for(let iy=0; iy<n; iy++) for(let ix=0; ix<n; ix++) {
+      const v = grid.z[iy][ix];
+      if(v == null) continue;
+      idx[iy*n+ix] = verts.length / 3;
+      verts.push(grid.x[ix]/100, ((v - tmin) / range) * 1.1, -grid.y[iy]/100);
+      const c = colorForValue(v, cr.zmin, cr.zmax, cmapVal);
+      cols.push(c[0], c[1], c[2]);
+    }
+    const tris = [];
+    for(let iy=0; iy<n-1; iy++) for(let ix=0; ix<n-1; ix++) {
+      const a = idx[iy*n+ix], b = idx[iy*n+ix+1], c = idx[(iy+1)*n+ix], d = idx[(iy+1)*n+ix+1];
+      if(a>=0 && b>=0 && c>=0) tris.push(a, c, b);
+      if(b>=0 && c>=0 && d>=0) tris.push(b, c, d);
+    }
+    const pos = new Float32Array(verts), col = new Float32Array(cols);
+    const nrm = new Float32Array(pos.length);
+    const triArr = new Uint32Array(tris);
+    for(let t=0; t<triArr.length; t+=3) {
+      const a = triArr[t]*3, b = triArr[t+1]*3, c = triArr[t+2]*3;
+      const ux = pos[b]-pos[a], uy = pos[b+1]-pos[a+1], uz = pos[b+2]-pos[a+2];
+      const vx = pos[c]-pos[a], vy = pos[c+1]-pos[a+1], vz = pos[c+2]-pos[a+2];
+      const nx = uy*vz-uz*vy, ny = uz*vx-ux*vz, nz = ux*vy-uy*vx;
+      nrm[a]+=nx; nrm[a+1]+=ny; nrm[a+2]+=nz;
+      nrm[b]+=nx; nrm[b+1]+=ny; nrm[b+2]+=nz;
+      nrm[c]+=nx; nrm[c+1]+=ny; nrm[c+2]+=nz;
+    }
+    for(let i=0; i<nrm.length; i+=3) {
+      const l = Math.hypot(nrm[i], nrm[i+1], nrm[i+2]) || 1;
+      nrm[i]/=l; nrm[i+1]/=l; nrm[i+2]/=l;
+    }
+    const parts = [new Uint8Array(pos.buffer), new Uint8Array(nrm.buffer), new Uint8Array(col.buffer), new Uint8Array(triArr.buffer)];
+    const offsets = []; let off = 0;
+    const padded = parts.map(u8 => {
+      offsets.push(off);
+      const pad = (4 - (u8.byteLength % 4)) % 4;
+      const out = new Uint8Array(u8.byteLength + pad); out.set(u8);
+      off += out.byteLength;
+      return out;
+    });
+    const binLen = padded.reduce((a,u8)=>a+u8.byteLength, 0);
+    const mins = [Infinity,Infinity,Infinity], maxs = [-Infinity,-Infinity,-Infinity];
+    for(let i=0; i<pos.length; i+=3) for(let k=0;k<3;k++) {
+      if(pos[i+k] < mins[k]) mins[k] = pos[i+k];
+      if(pos[i+k] > maxs[k]) maxs[k] = pos[i+k];
+    }
+    const gltf = {
+      asset:{version:"2.0", generator:"wafer-thickness-viewer-html",
+        extras:{note:"Z is normalized relief, NOT to scale. Vertex colour = thickness. Check the measured points and stats before judging thickness from colour."}},
+      scene:0, scenes:[{nodes:[0]}], nodes:[{mesh:0, name:"WaferThicknessSurface"}],
+      meshes:[{name:"surface", primitives:[{attributes:{POSITION:0, NORMAL:1, COLOR_0:2}, indices:3, material:0, mode:4}]}],
+      materials:[{pbrMetallicRoughness:{baseColorFactor:[1,1,1,1], metallicFactor:0.0, roughnessFactor:0.85}, doubleSided:true}],
+      buffers:[{byteLength:binLen}],
+      bufferViews:[
+        {buffer:0, byteOffset:offsets[0], byteLength:pos.byteLength, target:34962},
+        {buffer:0, byteOffset:offsets[1], byteLength:nrm.byteLength, target:34962},
+        {buffer:0, byteOffset:offsets[2], byteLength:col.byteLength, target:34962},
+        {buffer:0, byteOffset:offsets[3], byteLength:triArr.byteLength, target:34963}],
+      accessors:[
+        {bufferView:0, componentType:5126, count:pos.length/3, type:"VEC3", min:mins, max:maxs},
+        {bufferView:1, componentType:5126, count:nrm.length/3, type:"VEC3"},
+        {bufferView:2, componentType:5126, count:col.length/3, type:"VEC3"},
+        {bufferView:3, componentType:5125, count:triArr.length, type:"SCALAR"}],
+    };
+    let js = new TextEncoder().encode(JSON.stringify(gltf));
+    if(js.length % 4) { const p = new Uint8Array(js.length + (4 - js.length % 4)).fill(0x20); p.set(js); js = p; }
+    const total = 12 + 8 + js.length + 8 + binLen;
+    const buf = new ArrayBuffer(total);
+    const dv = new DataView(buf);
+    dv.setUint32(0, 0x46546C67, true); dv.setUint32(4, 2, true); dv.setUint32(8, total, true);
+    dv.setUint32(12, js.length, true); dv.setUint32(16, 0x4E4F534A, true);
+    new Uint8Array(buf, 20).set(js);
+    dv.setUint32(20 + js.length, binLen, true); dv.setUint32(24 + js.length, 0x004E4942, true);
+    const binView = new Uint8Array(buf, 28 + js.length);
+    let o = 0; for(const u8 of padded) { binView.set(u8, o); o += u8.byteLength; }
+    return buf;
+  }
+  window.__WaferApp.core.buildGLBBuffer = buildGLBBuffer;
+
+  async function exportGLB() {
+    const [nm, ds] = getActiveDataset();
+    if(!ds) throw new Error("没有活动数据集");
+    const {grid, ts, cmapVal, cr, opts} = await buildDisplayGrid(ds, 140);
+    if(!grid) throw new Error("当前为「不插值」模式，没有曲面可导出；请切换插值方法后重试");
+    const buf = buildGLBBuffer(grid, ts, cmapVal, cr);
+    const safe = String(nm || "wafer").replace(/[^\w\-]+/g, "_");
+    downloadBlob(`${safe}_3d_${opts.method}.glb`, new Blob([buf], {type:"model/gltf-binary"}));
+    setStatus(`GLB 已导出（${INTERP_LABELS[opts.method]}${opts.step ? " · 10 级色阶" : ""}）：在 PowerPoint 中「插入 → 3D 模型」即可拖动旋转。注意 Z 为归一化浮雕、非真实比例，颜色为估算填充，判读请以实测点和统计为准。`, "ok");
+  }
+
+  // ---------------------------------
+  // Rotating video export: the SAME display grid is drawn on a 2D canvas with a
+  // painter's-algorithm projection while the azimuth turns 360 degrees, and the
+  // canvas stream is recorded. MP4 is requested first; browsers without an MP4
+  // recorder fall back to WebM (reported honestly in the status line).
+  // ---------------------------------
+  function drawSurfaceFrame(ctx, W, H, built, azDeg) {
+    const {grid, xs, ys, ts, cmapVal, cr} = built;
+    const n = grid.z.length;
+    const tmin = Math.min(...ts), range = (Math.max(...ts) - tmin) || 1;
+    const az = azDeg * Math.PI / 180, el = 32 * Math.PI / 180;
+    const R = Math.max(...grid.x.map(Math.abs));
+    const scale = (Math.min(W, H) * 0.46) / R;
+    const cx = W / 2, cy = H / 2;
+    const proj = (x, y, t) => {
+      const h = (t - tmin) / range * R * 0.55;
+      const xr = x * Math.cos(az) - y * Math.sin(az);
+      const yr = x * Math.sin(az) + y * Math.cos(az);
+      const sx = cx + xr * scale;
+      const sy = cy + (yr * Math.cos(el) - h * Math.sin(el)) * scale * 0.92;
+      const depth = yr * Math.sin(el) + h * Math.cos(el);
+      return [sx, sy, depth];
+    };
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, W, H);
+    const quads = [];
+    for(let iy=0; iy<n-1; iy++) for(let ix=0; ix<n-1; ix++) {
+      const v00 = grid.z[iy][ix], v01 = grid.z[iy][ix+1], v10 = grid.z[iy+1][ix], v11 = grid.z[iy+1][ix+1];
+      if(v00 == null || v01 == null || v10 == null || v11 == null) continue;
+      const corners = [
+        proj(grid.x[ix], grid.y[iy], v00), proj(grid.x[ix+1], grid.y[iy], v01),
+        proj(grid.x[ix+1], grid.y[iy+1], v11), proj(grid.x[ix], grid.y[iy+1], v10)];
+      const avg = (v00 + v01 + v10 + v11) / 4;
+      const depth = corners.reduce((a,c)=>a+c[2], 0) / 4;
+      quads.push({corners, avg, depth});
+    }
+    quads.sort((a,b)=>a.depth - b.depth);
+    for(const q of quads) {
+      const c = colorForValue(q.avg, cr.zmin, cr.zmax, cmapVal);
+      ctx.beginPath();
+      q.corners.forEach((pt, i)=> i ? ctx.lineTo(pt[0], pt[1]) : ctx.moveTo(pt[0], pt[1]));
+      ctx.closePath();
+      ctx.fillStyle = `rgb(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)})`;
+      ctx.fill();
+    }
+    // measured points on the surface (the only real data)
+    ctx.fillStyle = "#000000";
+    for(let k=0;k<xs.length;k++) {
+      const pt = proj(xs[k], ys[k], ts[k]);
+      ctx.beginPath(); ctx.arc(pt[0], pt[1], 3, 0, 2*Math.PI); ctx.fill();
+    }
+    ctx.fillStyle = "#333333"; ctx.font = "16px Arial";
+    ctx.fillText("Wafer Thickness 3D - estimated surface, black dots = measured points (Z not to scale)", 14, 24);
+  }
+
+  async function exportRotatingVideo(btn) {
+    const [nm, ds] = getActiveDataset();
+    if(!ds) throw new Error("没有活动数据集");
+    const built = await buildDisplayGrid(ds, 110);
+    if(!built.grid) throw new Error("当前为「不插值」模式，没有曲面可录制；请切换插值方法后重试");
+    if(typeof MediaRecorder === "undefined" || !HTMLCanvasElement.prototype.captureStream)
+      throw new Error("当前浏览器不支持画布录制，请换 Chrome / Edge 导出视频（GLB 不受影响）");
+    const mimeCandidates = ["video/mp4;codecs=avc1.640028", "video/mp4", "video/webm;codecs=vp9", "video/webm"];
+    const mime = mimeCandidates.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch(e) { return false; } });
+    if(!mime) throw new Error("当前浏览器不支持任何可用的视频录制格式");
+    const isMp4 = mime.indexOf("mp4") >= 0;
+    const canvas = document.createElement("canvas");
+    canvas.width = 960; canvas.height = 760;
+    const ctx = canvas.getContext("2d");
+    const stream = canvas.captureStream(30);
+    const rec = new MediaRecorder(stream, {mimeType: mime, videoBitsPerSecond: 8_000_000});
+    const chunks = [];
+    rec.ondataavailable = (e)=>{ if(e.data && e.data.size) chunks.push(e.data); };
+    const done = new Promise(res => { rec.onstop = res; });
+    if(btn) btn.disabled = true;
+    setStatus("正在录制旋转视频（约 5 秒），请勿切换数据集...");
+    rec.start(200);
+    const DURATION = 5000, t0 = performance.now();
+    await new Promise(res => {
+      const tick = () => {
+        const el = performance.now() - t0;
+        drawSurfaceFrame(ctx, canvas.width, canvas.height, built, -55 + 360 * Math.min(1, el / DURATION));
+        if(el < DURATION) requestAnimationFrame(tick); else res();
+      };
+      tick();
+    });
+    rec.stop();
+    await done;
+    if(btn) btn.disabled = false;
+    const safe = String(nm || "wafer").replace(/[^\w\-]+/g, "_");
+    const ext = isMp4 ? "mp4" : "webm";
+    downloadBlob(`${safe}_3d_rotate_${built.opts.method}.${ext}`, new Blob(chunks, {type: mime}));
+    setStatus(isMp4
+      ? `旋转视频已导出（MP4，${INTERP_LABELS[built.opts.method]}）：可直接插入 PPT 播放。Z 非真实比例，黑点为实测点。`
+      : "旋转视频已导出，但当前浏览器不支持 MP4 录制，已回退为 WebM（PPT 对 WebM 支持差，建议换 Chrome 再导一次，或改用 GLB）。", "ok");
   }
 
   function downloadText(filename, text, mime="text/plain") {
@@ -1300,6 +1597,8 @@ def generate_pattern_coords(pattern_type, radius_mm, edge_exclude_mm, **kwargs):
     $("#hintMeta").textContent = ds ? `创建时间：${ds.created_at} | 点数：${ds.df.length}` : "还没有数据集：可导入 CSV 或在生成器中保存。";
     $("#btnExportPPT").disabled = !ds;
     $("#btnExportCSV").disabled = !ds;
+    const bG = $("#btnExportGLB"); if(bG) bG.disabled = !ds;
+    const bV = $("#btnExportVideo"); if(bV) bV.disabled = !ds;
     $("#btnRender").disabled = !ds;
     $("#btnDelete").disabled = !ds;
     $("#btnRename").disabled = !ds;
@@ -1732,6 +2031,21 @@ $("#btnGenSave").disabled = false;
       const xs=[0,10,-10], ys=[0,10,-10], ts=[1,2,3];
       const g = await idwGrid(xs,ys,ts, 50, 50);
       if(g && g.z && g.z.length===50) ok("idwGrid returns gridRes"); else fail("idwGrid bad result");
+      // nearest: every filled cell must equal one of the measured values (no invented values)
+      const gn = await idwGrid(xs,ys,ts, 50, 30, 2.0, 1e-6, {method:"nearest"});
+      let nearestOk = true, filled = 0;
+      for(const row of gn.z) for(const v of row) { if(v != null) { filled++; if(!ts.includes(v)) nearestOk = false; } }
+      if(nearestOk && filled > 0) ok("nearest grid only uses measured values"); else fail("nearest grid invented a value");
+      // data limit: nothing painted beyond the outermost measured point (max r = ~14.14 here, limitR=14.15)
+      const gl = await idwGrid(xs,ys,ts, 50, 30, 2.0, 1e-6, {method:"nearest", limitR:14.15});
+      let limitOk = true;
+      gl.z.forEach((row, iy)=>row.forEach((v, ix)=>{ if(v != null && Math.hypot(gl.x[ix], gl.y[iy]) > 14.16) limitOk = false; }));
+      if(limitOk) ok("data limit stops extrapolation"); else fail("data limit breached");
+      // GLB builder: magic + size
+      const fakeGrid = {x:[-10,0,10], y:[-10,0,10], z:[[1,2,1],[2,3,2],[1,2,1]]};
+      const glb = buildGLBBuffer(fakeGrid, [1,2,3], "viridis", {zmin:1, zmax:3});
+      const magic = new DataView(glb).getUint32(0, true);
+      if(magic === 0x46546C67 && glb.byteLength > 100) ok("buildGLBBuffer produces a GLB"); else fail("buildGLBBuffer bad output");
       ok("Self test done");
     } catch(e) {
       fail("Exception: " + e.message);
@@ -1875,6 +2189,14 @@ $("#btnGenSave").disabled = false;
     } catch(e) {
       setStatus("导出失败：" + e.message, "err");
     }
+  };
+
+  $("#btnExportGLB").onclick = async ()=>{
+    try { await exportGLB(); } catch(e) { setStatus("GLB 导出失败：" + e.message, "err"); }
+  };
+
+  $("#btnExportVideo").onclick = async (ev)=>{
+    try { await exportRotatingVideo(ev.currentTarget); } catch(e) { setStatus("视频导出失败：" + e.message, "err"); }
   };
 
   $("#btnExportCSV").onclick = ()=>{
